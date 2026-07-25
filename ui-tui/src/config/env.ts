@@ -29,25 +29,43 @@ export const STARTUP_RESUME_ID = (process.env.HERMES_TUI_RESUME ?? '').trim()
 export const STARTUP_QUERY = (process.env.HERMES_TUI_QUERY ?? '').trim()
 export const STARTUP_IMAGE = (process.env.HERMES_TUI_IMAGE ?? '').trim()
 
-// Mouse tracking mode resolution at startup. Per-mode selection (off|wheel|
-// buttons|all) lives in display.mouse_tracking in config.yaml — these env
-// vars only set the boot-time default before that config is applied.
-//
-// Precedence (highest first):
-//
-// - HERMES_TUI_MOUSE_TRACKING (truthy/falsy) explicitly overrides everything.
-//   This is the "force a value" knob and intentionally beats the legacy
-//   kill-switch and the Termux default.
-// - HERMES_TUI_DISABLE_MOUSE=1 forces mouse off — the legacy kill switch.
-// - On Termux the default is mouse off so touch selection isn't intercepted
-//   by terminal mouse protocols. Desktop defaults to 'all' to preserve prior
-//   behavior.
-const mouseTrackingOverride = parseToggle(process.env.HERMES_TUI_MOUSE_TRACKING)
-const mouseTrackingDisabledLegacy = truthy(process.env.HERMES_TUI_DISABLE_MOUSE)
+// Mouse and buffer behavior at startup. Config sync can refine mouse tracking
+// after the gateway connects, but boot must already preserve native selection:
+// a transient DEC mouse mode is enough for terminals to intercept a drag.
+// VS Code normally identifies itself with TERM_PROGRAM=vscode. Inside tmux that
+// value is replaced with `tmux`, while VS Code's IPC / askpass markers remain.
+// Keep this marker family aligned with detectVSCodeLikeTerminal() in
+// lib/terminalSetup.ts. Importing that helper here would also import its
+// filesystem-backed setup implementation during boot.
+export const isVsCodeTerminal = (env: NodeJS.ProcessEnv = process.env): boolean =>
+  String(env.TERM_PROGRAM ?? '').trim().toLowerCase() === 'vscode' ||
+  Boolean(String(env.VSCODE_INJECTION ?? '').trim()) ||
+  Boolean(String(env.VSCODE_IPC_HOOK_CLI ?? '').trim()) ||
+  Boolean(String(env.VSCODE_GIT_ASKPASS_MAIN ?? '').trim()) ||
+  Boolean(String(env.VSCODE_GIT_IPC_HANDLE ?? '').trim()) ||
+  Boolean(String(env.CURSOR_TRACE_ID ?? '').trim())
 
-const resolvedBootMouseEnabled = mouseTrackingOverride ?? (TERMUX_TUI_MODE ? false : !mouseTrackingDisabledLegacy)
+export const resolveBootTerminalModes = (
+  env: NodeJS.ProcessEnv = process.env
+): { inline: boolean; mouseTracking: MouseTrackingMode } => {
+  const termux = isTermuxTuiMode(env)
+  const vscode = isVsCodeTerminal(env)
+  const mouseTrackingOverride = parseToggle(env.HERMES_TUI_MOUSE_TRACKING)
+  const mouseTrackingDisabledLegacy = truthy(env.HERMES_TUI_DISABLE_MOUSE)
+  const mouseEnabled = mouseTrackingOverride ?? (termux || vscode ? false : !mouseTrackingDisabledLegacy)
+  const inlineOverride = parseToggle(env.HERMES_TUI_INLINE)
 
-export const MOUSE_TRACKING: MouseTrackingMode = resolvedBootMouseEnabled ? 'all' : 'off'
+  return {
+    // Primary-buffer rendering gives VS Code normal scrollback and text copy.
+    // Explicit HERMES_TUI_INLINE always wins for users who prefer full-screen.
+    inline: inlineOverride ?? (termux || vscode),
+    mouseTracking: mouseEnabled ? 'all' : 'off'
+  }
+}
+
+const bootTerminalModes = resolveBootTerminalModes()
+
+export const MOUSE_TRACKING: MouseTrackingMode = bootTerminalModes.mouseTracking
 
 export const NO_CONFIRM_DESTRUCTIVE = truthy(process.env.HERMES_TUI_NO_CONFIRM)
 
@@ -60,15 +78,11 @@ export const DASHBOARD_TUI_MODE = truthy(process.env.HERMES_TUI_DASHBOARD)
 // banner). Throwaway dev scaffolding; the whole readout gates on this one flag.
 export const DEV_CREDITS_MODE = truthy(process.env.HERMES_DEV_CREDITS)
 
-const inlineOverride = parseToggle(process.env.HERMES_TUI_INLINE)
-
 // Skip AlternateScreen — TUI renders into the primary buffer so the host
-// terminal's native scrollback captures whatever scrolls off the top.
-//
-// On Termux we default this on: users often background/foreground the app,
-// and primary-buffer rendering makes long-thread review and copy/paste much
-// less fragile. Override explicitly with HERMES_TUI_INLINE=0/1.
-export const INLINE_MODE = inlineOverride ?? TERMUX_TUI_MODE
+// terminal's native scrollback captures whatever scrolls off the top. Termux
+// and VS Code default to this straightforward copy-friendly mode; an explicit
+// HERMES_TUI_INLINE=0/1 override remains authoritative.
+export const INLINE_MODE = bootTerminalModes.inline
 
 // Live FPS counter overlay, fed by ink's onFrame (real render rate, not a
 // synthetic timer).
