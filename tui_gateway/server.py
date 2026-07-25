@@ -15787,6 +15787,48 @@ def _details_completions(text: str) -> list[dict] | None:
     return []
 
 
+_SLASH_COMPLETION_LIMIT = 30
+
+
+def _balanced_slash_completion_items(items: list[dict]) -> list[dict]:
+    """Bound the TUI menu while keeping both commands and skills visible.
+
+    The completer emits registry commands before skill commands. A plain `[:30]`
+    therefore hid every skill for a bare `/` once the registry grew past 30.
+    Interleaving preserves each group's stable order and puts skills in the
+    initial 16-row viewport without growing the bounded core menu.
+    """
+    if len(items) <= _SLASH_COMPLETION_LIMIT:
+        return [
+            {key: value for key, value in item.items() if key != "_is_skill"}
+            for item in items
+        ]
+
+    regular = [item for item in items if not item.get("_is_skill")]
+    skills = [item for item in items if item.get("_is_skill")]
+
+    if not regular or not skills:
+        selected = items[:_SLASH_COMPLETION_LIMIT]
+    else:
+        selected = []
+        regular_idx = 0
+        skill_idx = 0
+        while len(selected) < _SLASH_COMPLETION_LIMIT and (
+            regular_idx < len(regular) or skill_idx < len(skills)
+        ):
+            if regular_idx < len(regular):
+                selected.append(regular[regular_idx])
+                regular_idx += 1
+            if len(selected) < _SLASH_COMPLETION_LIMIT and skill_idx < len(skills):
+                selected.append(skills[skill_idx])
+                skill_idx += 1
+
+    return [
+        {key: value for key, value in item.items() if key != "_is_skill"}
+        for item in selected
+    ]
+
+
 @method("complete.slash")
 def _(rid, params: dict) -> dict:
     text = params.get("text", "")
@@ -15801,24 +15843,40 @@ def _(rid, params: dict) -> dict:
         from agent.skill_commands import get_skill_commands
         from agent.skill_bundles import get_skill_bundles
 
+        skill_commands = get_skill_commands()
+        skill_keys = {
+            "/" + str(command).lstrip("/").replace("_", "-").lower()
+            for command in skill_commands
+        }
         completer = SlashCommandCompleter(
-            skill_commands_provider=lambda: get_skill_commands(),
+            skill_commands_provider=lambda: skill_commands,
             skill_bundles_provider=lambda: get_skill_bundles(),
         )
         doc = Document(text, len(text))
-        items = [
-            {
-                "text": c.text,
-                # prompt_toolkit gives us FormattedText (a list of (style,
-                # text) tuples) for display/display_meta. Serialize both as
-                # plain strings — the TUI's CompletionItem.display contract
-                # is a string, and sending the raw list trips Ink's row
-                # layout into 1-char truncation of the next column.
-                "display": to_plain_text(c.display) if c.display else c.text,
-                "meta": to_plain_text(c.display_meta) if c.display_meta else "",
-            }
-            for c in completer.get_completions(doc, None)
-        ][:30]
+        items = []
+        for completion in completer.get_completions(doc, None):
+            # prompt_toolkit gives us FormattedText (a list of (style, text)
+            # tuples) for display/display_meta. Serialize both as plain strings.
+            display = (
+                to_plain_text(completion.display)
+                if completion.display
+                else completion.text
+            )
+            normalized_display = (
+                "/" + display.lstrip("/").replace("_", "-").lower()
+            )
+            items.append(
+                {
+                    "text": completion.text,
+                    "display": display,
+                    "meta": (
+                        to_plain_text(completion.display_meta)
+                        if completion.display_meta
+                        else ""
+                    ),
+                    "_is_skill": normalized_display in skill_keys,
+                }
+            )
         text_lower = text.lower()
         extras = [
             {
@@ -15842,6 +15900,8 @@ def _(rid, params: dict) -> dict:
                 "meta": "Set mouse tracking preset [on|off|toggle|wheel|buttons|all]",
             },
         ]
+        items = _balanced_slash_completion_items(items)
+
         for extra in extras:
             if extra["text"].startswith(text_lower) and not any(
                 item["text"] == extra["text"] for item in items

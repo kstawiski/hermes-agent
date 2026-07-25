@@ -2078,6 +2078,63 @@ def test_dispatch_unknown_long_method_still_goes_inline(server):
     assert resp["result"] == {"ok": True}
 
 
+def test_root_slash_completion_surfaces_skills_in_initial_window(server, monkeypatch):
+    """Bare `/` must show skills inline, not hide all of them behind built-ins."""
+    import agent.skill_bundles
+    import agent.skill_commands
+
+    monkeypatch.setattr(agent.skill_bundles, "get_skill_bundles", lambda: [])
+    monkeypatch.setattr(
+        agent.skill_commands,
+        "get_skill_commands",
+        lambda: {
+            "/alpha-skill": {"description": "First test skill"},
+            "/beta-skill": {"description": "Second test skill"},
+        },
+    )
+
+    response = server._methods["complete.slash"]("skills", {"text": "/"})
+    items = response["result"]["items"]
+
+    assert len(items) <= 34
+    assert items[0]["display"] == "/new"
+    assert any(item["display"] == "/alpha-skill" for item in items[:16])
+    assert any(item["display"] == "/beta-skill" for item in items[:16])
+    assert any(item["display"] == "/mouse" for item in items)
+    assert all("_is_skill" not in item for item in items)
+
+
+def test_slash_completion_balancer_preserves_short_result_order(server):
+    items = [
+        {"text": "new", "display": "/new"},
+        {"text": "alpha-skill", "display": "/alpha-skill", "_is_skill": True},
+        {"text": "model", "display": "/model"},
+    ]
+
+    balanced = server._balanced_slash_completion_items(items)
+
+    assert [item["display"] for item in balanced] == [
+        "/new",
+        "/alpha-skill",
+        "/model",
+    ]
+    assert all("_is_skill" not in item for item in balanced)
+
+
+def test_slash_subcommand_completion_keeps_existing_order(server):
+    response = server._methods["complete.slash"]("reasoning", {"text": "/reasoning "})
+
+    assert response["result"]["replace_from"] == len("/reasoning ")
+    assert [item["text"] for item in response["result"]["items"][:6]] == [
+        "none",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+    ]
+
+
 @pytest.mark.parametrize("completion_method", ["complete.path", "complete.slash"])
 def test_completion_handlers_are_pool_routed(completion_method, server):
     """complete.path/complete.slash must run on the pool, never the reader thread.
