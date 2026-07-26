@@ -6,6 +6,7 @@ import sys
 import threading
 import time
 import types
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -22,14 +23,22 @@ def _restore_stdout():
 @pytest.fixture()
 def server():
     with patch.dict("sys.modules", {
-        "hermes_constants": MagicMock(get_hermes_home=MagicMock(return_value="/tmp/hermes_test")),
+        "hermes_constants": MagicMock(
+            get_hermes_home=MagicMock(return_value=Path("/tmp/hermes_test"))
+        ),
         "hermes_cli.env_loader": MagicMock(),
         "hermes_cli.banner": MagicMock(),
         "hermes_state": MagicMock(),
     }):
         import importlib
         mod = importlib.import_module("tui_gateway.server")
+        methods = dict(mod._methods)
         yield mod
+        # Restore tests that replace RPC handlers. Without this, later tests
+        # exercise stale fake handlers (for example, a deliberate `boom`)
+        # instead of the real completion/session methods.
+        mod._methods.clear()
+        mod._methods.update(methods)
         # Reset module-level session state without re-importing. importlib.reload
         # would re-register the module's atexit hooks (ThreadPoolExecutor
         # shutdown, _shutdown_sessions); the duplicates race the stderr
@@ -2236,6 +2245,7 @@ def test_slash_completion_balancer_preserves_short_result_order(server):
 def test_slash_subcommand_completion_keeps_existing_order(server):
     response = server._methods["complete.slash"]("reasoning", {"text": "/reasoning "})
 
+    assert "result" in response, response
     assert response["result"]["replace_from"] == len("/reasoning ")
     assert [item["text"] for item in response["result"]["items"][:6]] == [
         "none",
