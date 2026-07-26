@@ -30,6 +30,16 @@ describe('terminalSetup helpers', () => {
     expect(detectVSCodeLikeTerminal({} as NodeJS.ProcessEnv)).toBeNull()
   })
 
+  it('does not infer the attached terminal from markers inherited by tmux', () => {
+    expect(
+      detectVSCodeLikeTerminal({
+        TMUX: '/tmp/tmux-1000/default,1,0',
+        TERM_PROGRAM: 'tmux',
+        VSCODE_GIT_IPC_HANDLE: '/tmp/vscode-git.sock'
+      } as NodeJS.ProcessEnv)
+    ).toBeNull()
+  })
+
   it('computes VS Code style config dirs cross-platform', () => {
     expect(getVSCodeStyleConfigDir('Code', 'darwin', {} as NodeJS.ProcessEnv, '/home/me')).toBe(
       '/home/me/Library/Application Support/Code/User'

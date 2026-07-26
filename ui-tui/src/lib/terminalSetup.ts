@@ -80,6 +80,13 @@ const BASE_BINDINGS: Keybinding[] = [
 const targetBindings = (_platform: NodeJS.Platform): Keybinding[] => BASE_BINDINGS
 
 export function detectVSCodeLikeTerminal(env: NodeJS.ProcessEnv = process.env): null | SupportedTerminal {
+  // tmux server environments describe the client that created the server, not
+  // necessarily the terminal attached now. Treat inherited IDE markers as
+  // ambiguous instead of rewriting keybindings for an unrelated terminal.
+  if (env['TMUX']?.trim()) {
+    return null
+  }
+
   const askpass = env['VSCODE_GIT_ASKPASS_MAIN']?.toLowerCase() ?? ''
 
   if (env['CURSOR_TRACE_ID'] || askpass.includes('cursor')) {

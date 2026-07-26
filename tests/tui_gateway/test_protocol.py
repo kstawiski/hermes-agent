@@ -2105,11 +2105,12 @@ def test_root_slash_completion_surfaces_skills_in_initial_window(server, monkeyp
     response = server._methods["complete.slash"]("skills", {"text": "/"})
     items = response["result"]["items"]
 
-    assert len(items) <= 34
+    assert len(items) <= 46
     assert items[0]["display"] == "/new"
     assert any(item["display"] == "/alpha-skill" for item in items[:16])
     assert any(item["display"] == "/beta-skill" for item in items[:16])
     assert any(item["display"] == "/mouse" for item in items)
+    assert any(item["display"] == "/stop" for item in items)
     assert all("_is_skill" not in item for item in items)
 
 
@@ -2130,13 +2131,43 @@ def test_slash_completion_balancer_preserves_short_result_order(server):
     assert all("_is_skill" not in item for item in balanced)
 
 
+def test_slash_completion_balancer_preserves_command_budget_and_bounds_skills(server):
+    commands = [
+        {"text": f"command-{idx}", "display": f"/command-{idx}"}
+        for idx in range(35)
+    ]
+    skills = [
+        {
+            "text": f"skill-{idx}",
+            "display": f"/skill-{idx}",
+            "_is_skill": True,
+        }
+        for idx in range(40)
+    ]
+
+    balanced = server._balanced_slash_completion_items([*commands, *skills])
+    displays = [item["display"] for item in balanced]
+
+    assert len(balanced) == 30 + 12
+    assert all(command["display"] in displays for command in commands[:30])
+    assert all(command["display"] not in displays for command in commands[30:])
+    assert sum(display.startswith("/skill-") for display in displays) == 12
+    assert any(display.startswith("/skill-") for display in displays[:16])
+    assert all("_is_skill" not in item for item in balanced)
+
+
 def test_slash_subcommand_completion_keeps_existing_order(server, monkeypatch):
+    import agent.skill_bundles as skill_bundles
     import agent.skill_commands as skill_commands
 
     # A subcommand argument can legitimately share its text with an installed
     # skill. It must remain a command argument rather than being filtered into
     # the inline skill-only menu.
-    monkeypatch.setattr(skill_commands, "get_skill_commands", lambda: ["low"])
+    def fail_skill_scan():
+        pytest.fail("subcommand completion must not scan installed skills")
+
+    monkeypatch.setattr(skill_commands, "get_skill_commands", fail_skill_scan)
+    monkeypatch.setattr(skill_bundles, "get_skill_bundles", fail_skill_scan)
 
     response = server._methods["complete.slash"]("reasoning", {"text": "/reasoning "})
 

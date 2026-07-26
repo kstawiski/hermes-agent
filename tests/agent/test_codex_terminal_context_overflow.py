@@ -11,13 +11,12 @@ from agent.conversation_loop import (
 from agent.error_classifier import FailoverReason, classify_api_error
 
 
-@pytest.mark.parametrize("code", ["context_length_exceeded", "max_tokens_exceeded"])
-def test_terminal_codex_context_failure_requests_compression(code):
-    """A terminal Responses failure must enter compression recovery, not invalid-response retry."""
+def test_terminal_codex_context_failure_requests_compression():
+    """A terminal context failure must enter compression recovery, not invalid-response retry."""
     response = SimpleNamespace(
         status="failed",
         error=SimpleNamespace(
-            code=code,
+            code="context_length_exceeded",
             message="The request exceeds the model context window.",
         ),
     )
@@ -29,6 +28,30 @@ def test_terminal_codex_context_failure_requests_compression(code):
     assert classified.reason is FailoverReason.context_overflow
     assert classified.retryable is True
     assert classified.should_compress is True
+
+
+def test_max_tokens_exceeded_is_not_destructive_context_recovery():
+    """An output-limit terminal code must fail over without compressing valid input history."""
+    response = SimpleNamespace(
+        status="failed",
+        error=SimpleNamespace(
+            code="max_tokens_exceeded",
+            message="The response reached the model output token limit.",
+        ),
+    )
+
+    assert _codex_terminal_context_error(response) is None
+
+    classified = classify_api_error(
+        _CodexTerminalResponseError(
+            "The response reached the model output token limit.",
+            code="max_tokens_exceeded",
+        )
+    )
+    assert classified.reason is FailoverReason.format_error
+    assert classified.retryable is False
+    assert classified.should_compress is False
+    assert classified.should_fallback is True
 
 
 def test_structured_terminal_code_survives_message_formatter_changes():
@@ -50,6 +73,7 @@ def test_structured_terminal_code_survives_message_formatter_changes():
         ("failed", "invalid_api_key"),
         ("failed", "rate_limit_exceeded"),
         ("completed", "context_length_exceeded"),
+        ("cancelled", "context_length_exceeded"),
     ],
 )
 def test_non_overflow_terminal_responses_do_not_request_compaction(status, code):

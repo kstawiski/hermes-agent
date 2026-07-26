@@ -15919,39 +15919,38 @@ def _details_completions(text: str) -> list[dict] | None:
 
 
 _SLASH_COMPLETION_LIMIT = 30
+_ROOT_SLASH_SKILL_LIMIT = 12
 
 
 def _balanced_slash_completion_items(items: list[dict]) -> list[dict]:
-    """Bound the TUI menu while keeping both commands and skills visible.
+    """Keep every command while bounding and surfacing installed skills.
 
     The completer emits registry commands before skill commands. A plain `[:30]`
     therefore hid every skill for a bare `/` once the registry grew past 30.
-    Interleaving preserves each group's stable order and puts skills in the
-    initial 16-row viewport without growing the bounded core menu.
+    Replacing commands with skills fixed visibility but displaced commands from
+    the original 30-command budget. Interleave a bounded skill subset into the
+    initial viewport, then retain that complete command budget in stable order.
     """
-    if len(items) <= _SLASH_COMPLETION_LIMIT:
-        return [
-            {key: value for key, value in item.items() if key != "_is_skill"}
-            for item in items
-        ]
-
-    regular = [item for item in items if not item.get("_is_skill")]
+    regular = [item for item in items if not item.get("_is_skill")][
+        :_SLASH_COMPLETION_LIMIT
+    ]
     skills = [item for item in items if item.get("_is_skill")]
 
-    if not regular or not skills:
-        selected = items[:_SLASH_COMPLETION_LIMIT]
+    if not skills:
+        selected = regular
+    elif not regular:
+        selected = skills[:_SLASH_COMPLETION_LIMIT]
     else:
+        bounded_skills = skills[:_ROOT_SLASH_SKILL_LIMIT]
         selected = []
         regular_idx = 0
         skill_idx = 0
-        while len(selected) < _SLASH_COMPLETION_LIMIT and (
-            regular_idx < len(regular) or skill_idx < len(skills)
-        ):
+        while regular_idx < len(regular) or skill_idx < len(bounded_skills):
             if regular_idx < len(regular):
                 selected.append(regular[regular_idx])
                 regular_idx += 1
-            if len(selected) < _SLASH_COMPLETION_LIMIT and skill_idx < len(skills):
-                selected.append(skills[skill_idx])
+            if skill_idx < len(bounded_skills):
+                selected.append(bounded_skills[skill_idx])
                 skill_idx += 1
 
     return [
@@ -15978,8 +15977,10 @@ def _(rid, params: dict) -> dict:
         # whitespace-delimited argument begins, an identical display string is
         # still an argument of the active command and must retain command kind.
         root_command_name = not any(char.isspace() for char in text[1:])
-        skill_commands = get_skill_commands()
-        skill_bundles = get_skill_bundles()
+        current_token = text[text.rfind(" ") + 1 :]
+        scan_skills = root_command_name or current_token.startswith("/")
+        skill_commands = get_skill_commands() if scan_skills else []
+        skill_bundles = get_skill_bundles() if scan_skills else []
         skill_keys = {
             "/" + str(command).lstrip("/").replace("_", "-").lower()
             for command in (*skill_commands, *skill_bundles)

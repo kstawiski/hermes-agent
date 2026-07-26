@@ -91,10 +91,7 @@ from utils import base_url_host_matches, env_var_enabled
 
 logger = logging.getLogger(__name__)
 
-_CODEX_CONTEXT_OVERFLOW_CODES = frozenset({
-    "context_length_exceeded",
-    "max_tokens_exceeded",
-})
+_CODEX_CONTEXT_OVERFLOW_CODE = "context_length_exceeded"
 
 
 class _CodexTerminalResponseError(RuntimeError):
@@ -113,7 +110,7 @@ def _codex_terminal_context_error(response: Any) -> Optional[RuntimeError]:
     before rebuilding the request instead of retrying the same oversized input.
     """
     status = str(getattr(response, "status", "") or "").strip().lower()
-    if status not in {"failed", "cancelled"}:
+    if status != "failed":
         return None
 
     error_obj = getattr(response, "error", None)
@@ -126,14 +123,12 @@ def _codex_terminal_context_error(response: Any) -> Optional[RuntimeError]:
     code_lower = str(code or "").strip().lower()
     message_lower = message.lower()
     if (
-        code_lower not in _CODEX_CONTEXT_OVERFLOW_CODES
-        and not any(item in message_lower for item in _CODEX_CONTEXT_OVERFLOW_CODES)
+        code_lower != _CODEX_CONTEXT_OVERFLOW_CODE
+        and _CODEX_CONTEXT_OVERFLOW_CODE not in message_lower
     ):
         return None
 
-    inferred_code = code_lower or next(
-        item for item in _CODEX_CONTEXT_OVERFLOW_CODES if item in message_lower
-    )
+    inferred_code = code_lower or _CODEX_CONTEXT_OVERFLOW_CODE
     return _CodexTerminalResponseError(message, code=inferred_code)
 
 # Stable prefix of the local interrupt status string emitted when a turn is

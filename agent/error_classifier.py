@@ -1388,11 +1388,18 @@ def _classify_by_error_code(
             should_fallback=True,
         )
 
-    if code_lower in {"context_length_exceeded", "max_tokens_exceeded"}:
+    if code_lower == "context_length_exceeded":
         return result_fn(
             FailoverReason.context_overflow,
             retryable=True,
             should_compress=True,
+        )
+
+    if code_lower == "max_tokens_exceeded":
+        return result_fn(
+            FailoverReason.format_error,
+            retryable=False,
+            should_fallback=True,
         )
 
     if code_lower == "invalid_encrypted_content":

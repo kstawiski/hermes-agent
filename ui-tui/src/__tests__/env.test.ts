@@ -11,13 +11,14 @@ describe('resolveBootTerminalModes', () => {
     ).toEqual({ inline: true, mouseTracking: 'off' })
   })
 
-  it('detects VS Code when tmux masks TERM_PROGRAM', () => {
+  it('does not trust VS Code markers inherited by a tmux server', () => {
     expect(
       resolveBootTerminalModes({
+        TMUX: '/tmp/tmux-1000/default,1,0',
         TERM_PROGRAM: 'tmux',
         VSCODE_GIT_ASKPASS_MAIN: '/vscode/extensions/git/dist/askpass-main.js'
       })
-    ).toEqual({ inline: true, mouseTracking: 'off' })
+    ).toEqual({ inline: false, mouseTracking: 'all' })
   })
 
   it('keeps explicit TUI overrides authoritative in VS Code', () => {

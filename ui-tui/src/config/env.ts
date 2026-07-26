@@ -32,18 +32,20 @@ export const STARTUP_IMAGE = (process.env.HERMES_TUI_IMAGE ?? '').trim()
 // Mouse and buffer behavior at startup. Config sync can refine mouse tracking
 // after the gateway connects, but boot must already preserve native selection:
 // a transient DEC mouse mode is enough for terminals to intercept a drag.
-// VS Code normally identifies itself with TERM_PROGRAM=vscode. Inside tmux that
-// value is replaced with `tmux`, while VS Code's IPC / askpass markers remain.
-// Keep this marker family aligned with detectVSCodeLikeTerminal() in
+// VS Code normally identifies itself with TERM_PROGRAM=vscode. A tmux server
+// retains the environment of the client that created it, so VS Code markers
+// cannot identify the terminal attached later. Keep this guard and marker
+// family aligned with detectVSCodeLikeTerminal() in
 // lib/terminalSetup.ts. Importing that helper here would also import its
 // filesystem-backed setup implementation during boot.
 export const isVsCodeTerminal = (env: NodeJS.ProcessEnv = process.env): boolean =>
-  String(env.TERM_PROGRAM ?? '').trim().toLowerCase() === 'vscode' ||
-  Boolean(String(env.VSCODE_INJECTION ?? '').trim()) ||
-  Boolean(String(env.VSCODE_IPC_HOOK_CLI ?? '').trim()) ||
-  Boolean(String(env.VSCODE_GIT_ASKPASS_MAIN ?? '').trim()) ||
-  Boolean(String(env.VSCODE_GIT_IPC_HANDLE ?? '').trim()) ||
-  Boolean(String(env.CURSOR_TRACE_ID ?? '').trim())
+  !String(env.TMUX ?? '').trim() &&
+  (String(env.TERM_PROGRAM ?? '').trim().toLowerCase() === 'vscode' ||
+    Boolean(String(env.VSCODE_INJECTION ?? '').trim()) ||
+    Boolean(String(env.VSCODE_IPC_HOOK_CLI ?? '').trim()) ||
+    Boolean(String(env.VSCODE_GIT_ASKPASS_MAIN ?? '').trim()) ||
+    Boolean(String(env.VSCODE_GIT_IPC_HANDLE ?? '').trim()) ||
+    Boolean(String(env.CURSOR_TRACE_ID ?? '').trim()))
 
 export const resolveBootTerminalModes = (
   env: NodeJS.ProcessEnv = process.env
