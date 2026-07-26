@@ -261,6 +261,22 @@ def _delete_delegate_children(conn, parent_ids: List[str]) -> List[str]:
 T = TypeVar("T")
 
 DEFAULT_DB_PATH = get_hermes_home() / "state.db"
+_DEFAULT_DB_PATH_AT_IMPORT = DEFAULT_DB_PATH
+
+
+def get_default_db_path() -> Path:
+    """Resolve the default state DB at construction time.
+
+    ``HERMES_HOME`` and the context-local profile override may be installed
+    after this module is imported.  Returning the import-time snapshot here
+    made tests — and any late profile scope — silently read the launch user's
+    live database.  Preserve ``DEFAULT_DB_PATH`` as a backwards-compatible
+    explicit override for callers/tests that monkeypatch it, but otherwise
+    resolve the active Hermes home now.
+    """
+    if DEFAULT_DB_PATH is not _DEFAULT_DB_PATH_AT_IMPORT:
+        return Path(DEFAULT_DB_PATH)
+    return get_hermes_home() / "state.db"
 
 SCHEMA_VERSION = 23
 
@@ -1886,7 +1902,7 @@ class SessionDB:
     _IMPORT_MAX_TOTAL_BYTES = 25 * 1024 * 1024
 
     def __init__(self, db_path: Path = None, read_only: bool = False):
-        self.db_path = db_path or DEFAULT_DB_PATH
+        self.db_path = Path(db_path) if db_path is not None else get_default_db_path()
         self.read_only = read_only
 
         self._lock = threading.Lock()

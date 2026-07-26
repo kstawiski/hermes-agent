@@ -75,9 +75,8 @@ def _make_runner_with_adapter(session_id: str = None):
     runner._queued_events = {}
 
     src = _make_source()
-    # Default to a unique session_id so xdist parallel runs on the same worker
-    # don't see each other's GoalManager state (DEFAULT_DB_PATH gets frozen at
-    # module-import time, defeating per-test HERMES_HOME monkeypatches).
+    # Default to a unique session_id so ad-hoc runs that deliberately share a
+    # database cannot see another test's GoalManager state.
     session_entry = SessionEntry(
         session_key=build_session_key(src),
         session_id=session_id or f"goal-sess-{uuid.uuid4().hex[:8]}",

@@ -1,10 +1,9 @@
 """The conftest WAL gate must agree with hermes_state, and must not import it.
 
 ``tests/conftest.py::_wal_is_usable`` duplicates the SQLite WAL-reset version
-predicate instead of importing ``hermes_state``. That is deliberate: importing
-``hermes_state`` during collection caches ``DEFAULT_DB_PATH`` from the real
-``~/.hermes`` before the per-test ``HERMES_HOME`` redirect, which makes tests
-read the developer's live production database.
+predicate instead of importing ``hermes_state``. That is deliberate: collection
+needs only the small version predicate and should not load the state module's
+large transitive import surface.
 
 Duplication needs a guard, so these tests pin the two implementations in
 agreement across the documented upstream boundaries.
@@ -43,10 +42,8 @@ def test_conftest_gate_agrees_with_hermes_state(version_info, monkeypatch):
 
 
 def test_conftest_does_not_import_hermes_state_at_collection():
-    """The gate must stay import-free of hermes_state.
+    """The lightweight collection gate must stay import-free of hermes_state.
 
-    Importing it during collection caches DEFAULT_DB_PATH from the real
-    ~/.hermes, so tests read live production sessions instead of a tempdir.
     Reading the source is not an option here (banned), so assert on behavior:
     the gate must work with ``hermes_state`` absent from ``sys.modules`` and
     blocked from being imported.
@@ -61,8 +58,8 @@ def test_conftest_does_not_import_hermes_state_at_collection():
         if name == "hermes_state" or name.startswith("hermes_state."):
             blocked.append(name)
             raise AssertionError(
-                "conftest._wal_is_usable imported hermes_state — this caches "
-                "DEFAULT_DB_PATH from the real ~/.hermes during collection"
+                "conftest._wal_is_usable imported the heavyweight hermes_state "
+                "module during collection"
             )
         return real_import(name, *args, **kwargs)
 

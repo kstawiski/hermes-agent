@@ -8,10 +8,8 @@ from gateway.config import GatewayConfig
 def test_load_transcript_returns_db_messages_when_no_jsonl(tmp_path, monkeypatch):
     """Reading a transcript must work from SQLite alone — no JSONL fallback needed.
 
-    Pin DEFAULT_DB_PATH to tmp_path so this test cannot write to the real
-    ~/.hermes/state.db. (DEFAULT_DB_PATH is a module-level constant computed
-    at hermes_state import time, before pytest's HERMES_HOME monkeypatch
-    fires — the autouse fixture's HERMES_HOME override doesn't help here.)
+    Pin DEFAULT_DB_PATH explicitly so the test remains local even when run
+    outside the repository's autouse HERMES_HOME isolation fixture.
     """
     import hermes_state
     monkeypatch.setattr(hermes_state, "DEFAULT_DB_PATH", tmp_path / "state.db")

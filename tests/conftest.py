@@ -560,12 +560,10 @@ def _wal_is_usable() -> bool:
     3.50.4 (vulnerable → DELETE) alongside a Hermes managed runtime on 3.53.1
     (fixed → WAL). The same test then passes in one and fails in the other.
 
-    IMPORTANT: this must NOT import ``hermes_state``. That module computes
-    ``DEFAULT_DB_PATH`` from ``get_hermes_home()`` at import time, so importing
-    it during collection — before the per-test ``_isolate_hermes_home`` fixture
-    redirects ``HERMES_HOME`` — permanently caches the DEVELOPER'S REAL
-    ``~/.hermes/state.db`` for the whole session. Tests then read live
-    production sessions instead of a tempdir. The version predicate is
+    Keep this collection-time predicate independent of ``hermes_state``. The
+    state module has a large import surface that collection does not need; the
+    actual SessionDB default path is resolved later, at construction time. Tests
+    therefore continue to use their isolated HERMES_HOME. The version predicate is
     duplicated from ``hermes_state._is_sqlite_wal_reset_vulnerable`` (upstream
     fixed ranges, stable) rather than imported, and
     ``test_conftest_wal_gate.py`` pins the two implementations in agreement.

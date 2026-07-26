@@ -77,6 +77,19 @@ def db(tmp_path):
     session_db.close()
 
 
+def test_default_db_path_follows_current_hermes_home(tmp_path, monkeypatch):
+    """Late HERMES_HOME isolation must never fall back to the import-time DB."""
+    isolated_home = tmp_path / "isolated-hermes"
+    monkeypatch.setenv("HERMES_HOME", str(isolated_home))
+
+    assert hermes_state.get_default_db_path() == isolated_home / "state.db"
+    session_db = SessionDB()
+    try:
+        assert session_db.db_path == isolated_home / "state.db"
+    finally:
+        session_db.close()
+
+
 # =========================================================================
 # Session lifecycle
 # =========================================================================
