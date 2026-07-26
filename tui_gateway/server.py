@@ -15900,6 +15900,10 @@ def _(rid, params: dict) -> dict:
         from agent.skill_commands import get_skill_commands
         from agent.skill_bundles import get_skill_bundles
 
+        # Only command-name completions can represent installed skills. Once a
+        # whitespace-delimited argument begins, an identical display string is
+        # still an argument of the active command and must retain command kind.
+        root_command_name = not any(char.isspace() for char in text[1:])
         skill_commands = get_skill_commands()
         skill_bundles = get_skill_bundles()
         skill_keys = {
@@ -15923,7 +15927,7 @@ def _(rid, params: dict) -> dict:
             normalized_display = (
                 "/" + display.lstrip("/").replace("_", "-").lower()
             )
-            is_skill = normalized_display in skill_keys
+            is_skill = root_command_name and normalized_display in skill_keys
             items.append(
                 {
                     "text": completion.text,
