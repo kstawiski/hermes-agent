@@ -2199,7 +2199,14 @@ def test_slash_completion_balancer_preserves_short_result_order(server):
     assert all("_is_skill" not in item for item in balanced)
 
 
-def test_slash_subcommand_completion_keeps_existing_order(server):
+def test_slash_subcommand_completion_keeps_existing_order(server, monkeypatch):
+    import agent.skill_commands as skill_commands
+
+    # A subcommand argument can legitimately share its text with an installed
+    # skill. It must remain a command argument rather than being filtered into
+    # the inline skill-only menu.
+    monkeypatch.setattr(skill_commands, "get_skill_commands", lambda: ["low"])
+
     response = server._methods["complete.slash"]("reasoning", {"text": "/reasoning "})
 
     assert "result" in response, response
@@ -2212,6 +2219,7 @@ def test_slash_subcommand_completion_keeps_existing_order(server):
         "high",
         "xhigh",
     ]
+    assert all(item["kind"] == "command" for item in response["result"]["items"][:6])
 
 
 @pytest.mark.parametrize("completion_method", ["complete.path", "complete.slash"])
