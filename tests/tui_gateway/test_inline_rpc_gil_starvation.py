@@ -19,6 +19,7 @@ import json
 import sys
 import threading
 import time
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -35,14 +36,17 @@ def _restore_stdout():
 @pytest.fixture()
 def server():
     with patch.dict("sys.modules", {
-        "hermes_constants": MagicMock(get_hermes_home=MagicMock(return_value="/tmp/hermes_test")),
+        "hermes_constants": MagicMock(get_hermes_home=MagicMock(return_value=Path("/tmp/hermes_test"))),
         "hermes_cli.env_loader": MagicMock(),
         "hermes_cli.banner": MagicMock(),
         "hermes_state": MagicMock(),
     }):
         import importlib
         mod = importlib.import_module("tui_gateway.server")
+        methods = dict(mod._methods)
         yield mod
+        mod._methods.clear()
+        mod._methods.update(methods)
         mod._sessions.clear()
         mod._pending.clear()
         mod._answers.clear()
@@ -159,3 +163,8 @@ def test_rpc_pool_workers_supports_concurrent_long_handlers(server):
         f"Frontend-polled RPCs added to _LONG_HANDLERS need more workers to "
         f"avoid queueing under multi-agent load (#50005)."
     )
+
+
+def test_rpc_registry_is_not_contaminated_by_prior_tests(server):
+    """Synthetic handlers from earlier tests must not escape their fixture."""
+    assert "fast.check" not in server._methods
