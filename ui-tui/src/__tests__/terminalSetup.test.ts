@@ -92,15 +92,54 @@ describe('configureTerminalKeybindings', () => {
     expect(writeFile).toHaveBeenCalledTimes(1)
     expect(copyFile).not.toHaveBeenCalled() // no existing file to back up
     const written = writeFile.mock.calls[0]?.[1] as string
-    expect(written).toContain('cmd+c')
-    expect(written).toContain('terminalTextSelected')
-    expect(written).toContain('\\u001b[99;13u')
+    expect(written).not.toContain('"key": "cmd+c"')
+    expect(written).not.toContain('terminalTextSelected')
+    expect(written).not.toContain('\\u001b[99;13u')
     expect(written).toContain('shift+enter')
     expect(written).toContain('cmd+enter')
     expect(written).toContain('cmd+z')
   })
 
-  it('only adds the Cmd+C forwarding binding on macOS', async () => {
+  it('removes only the exact legacy Hermes Cmd+C interception binding', async () => {
+    const mkdir = vi.fn().mockResolvedValue(undefined)
+    const readFile = vi.fn().mockResolvedValue(
+      JSON.stringify([
+        {
+          key: 'cmd+c',
+          command: 'workbench.action.terminal.sendSequence',
+          when: 'terminalFocus && terminalTextSelected',
+          args: { text: '\u001b[99;13u' }
+        },
+        {
+          key: 'cmd+c',
+          command: 'workbench.action.terminal.copySelection',
+          when: 'terminalFocus'
+        },
+        {
+          key: 'cmd+c',
+          command: 'myExtension.smartCopy'
+        }
+      ])
+    )
+    const writeFile = vi.fn().mockResolvedValue(undefined)
+    const copyFile = vi.fn().mockResolvedValue(undefined)
+
+    const result = await configureTerminalKeybindings('vscode', {
+      fileOps: { copyFile, mkdir, readFile, writeFile },
+      homeDir: '/Users/me',
+      platform: 'darwin'
+    })
+
+    expect(result.success).toBe(true)
+    expect(result.message).toContain('Removed the legacy Hermes Cmd+C interception')
+    expect(copyFile).toHaveBeenCalledTimes(1)
+    const written = writeFile.mock.calls[0]?.[1] as string
+    expect(written).not.toContain('\\u001b[99;13u')
+    expect(written).toContain('workbench.action.terminal.copySelection')
+    expect(written).toContain('myExtension.smartCopy')
+  })
+
+  it('does not add the legacy Cmd+C forwarding binding on non-macOS', async () => {
     const mkdir = vi.fn().mockResolvedValue(undefined)
     const readFile = vi.fn().mockRejectedValue(Object.assign(new Error('missing'), { code: 'ENOENT' }))
     const writeFile = vi.fn().mockResolvedValue(undefined)
@@ -149,10 +188,9 @@ describe('configureTerminalKeybindings', () => {
     expect(copyFile).not.toHaveBeenCalled() // no backup when not writing
   })
 
-  it('flags a global (when-less) binding on the same key as a conflict', async () => {
-    // A user's keybindings.json `cmd+c` with no `when` clause is global —
-    // it overlaps any context, including our terminal scope. We must NOT
-    // silently add a terminal-scoped cmd+c that would shadow it.
+  it('preserves a user global Cmd+C binding while configuring Hermes shortcuts', async () => {
+    // Native copy owns Cmd+C; unrelated user bindings must neither be rejected
+    // nor removed by Hermes setup.
     const mkdir = vi.fn().mockResolvedValue(undefined)
 
     const readFile = vi.fn().mockResolvedValue(
@@ -173,17 +211,14 @@ describe('configureTerminalKeybindings', () => {
       platform: 'darwin'
     })
 
-    expect(result.success).toBe(false)
-    expect(result.message).toContain('cmd+c')
-    expect(writeFile).not.toHaveBeenCalled()
+    expect(result.success).toBe(true)
+    expect(writeFile).toHaveBeenCalledTimes(1)
+    expect(writeFile.mock.calls[0]?.[1] as string).toContain('myExtension.smartCopy')
   })
 
-  it('flags an overlapping terminal-context binding as a conflict', async () => {
-    // Existing `cmd+c` scoped to plain `terminalFocus` overlaps with our
-    // `terminalFocus && terminalTextSelected` — both fire when the
-    // terminal is focused with text selected, so the existing binding
-    // would shadow ours. Treat as a conflict even though the strings
-    // aren't identical.
+  it('preserves native terminal copySelection while configuring Hermes shortcuts', async () => {
+    // Hermes no longer owns Cmd+C, so the terminal's native selection path
+    // remains authoritative after mouse capture is disabled.
     const mkdir = vi.fn().mockResolvedValue(undefined)
 
     const readFile = vi.fn().mockResolvedValue(
@@ -205,9 +240,9 @@ describe('configureTerminalKeybindings', () => {
       platform: 'darwin'
     })
 
-    expect(result.success).toBe(false)
-    expect(result.message).toContain('cmd+c')
-    expect(writeFile).not.toHaveBeenCalled()
+    expect(result.success).toBe(true)
+    expect(writeFile).toHaveBeenCalledTimes(1)
+    expect(writeFile.mock.calls[0]?.[1] as string).toContain('workbench.action.terminal.copySelection')
   })
 
   it('does not flag a negated terminalTextSelected binding as a conflict', async () => {
@@ -343,12 +378,6 @@ describe('configureTerminalKeybindings', () => {
     const readComplete = vi.fn().mockResolvedValue(
       JSON.stringify([
         {
-          key: 'cmd+c',
-          command: 'workbench.action.terminal.sendSequence',
-          when: 'terminalFocus && terminalTextSelected',
-          args: { text: '\u001b[99;13u' }
-        },
-        {
           key: 'shift+enter',
           command: 'workbench.action.terminal.sendSequence',
           when: 'terminalFocus',
@@ -387,6 +416,23 @@ describe('configureTerminalKeybindings', () => {
         fileOps: { readFile: readComplete }
       })
     ).resolves.toBe(false)
+
+    const readLegacyCopy = vi.fn().mockResolvedValue(
+      JSON.stringify([
+        {
+          key: 'cmd+c',
+          command: 'workbench.action.terminal.sendSequence',
+          when: 'terminalFocus && terminalTextSelected',
+          args: { text: '\u001b[99;13u' }
+        }
+      ])
+    )
+    await expect(
+      shouldPromptForTerminalSetup({
+        env: { TERM_PROGRAM: 'vscode' } as NodeJS.ProcessEnv,
+        fileOps: { readFile: readLegacyCopy }
+      })
+    ).resolves.toBe(true)
   })
 
   it('suppresses terminal setup prompts inside SSH sessions', async () => {

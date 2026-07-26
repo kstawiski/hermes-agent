@@ -34,6 +34,9 @@ const TERMINAL_META: Record<SupportedTerminal, { appName: string; label: string 
   windsurf: { appName: 'Windsurf', label: 'Windsurf' }
 }
 
+// Legacy Hermes-owned interception. Keep the exact value only so setup can
+// migrate installations that received it; native terminal selection now owns
+// Cmd+C and this binding must never be installed again.
 const MAC_COPY_BINDING: Keybinding = {
   key: 'cmd+c',
   command: 'workbench.action.terminal.sendSequence',
@@ -74,8 +77,7 @@ const BASE_BINDINGS: Keybinding[] = [
   }
 ]
 
-const targetBindings = (platform: NodeJS.Platform): Keybinding[] =>
-  platform === 'darwin' ? [MAC_COPY_BINDING, ...BASE_BINDINGS] : BASE_BINDINGS
+const targetBindings = (_platform: NodeJS.Platform): Keybinding[] => BASE_BINDINGS
 
 export function detectVSCodeLikeTerminal(env: NodeJS.ProcessEnv = process.env): null | SupportedTerminal {
   const askpass = env['VSCODE_GIT_ASKPASS_MAIN']?.toLowerCase() ?? ''
@@ -336,9 +338,13 @@ export async function configureTerminalKeybindings(
     }
 
     const targets = targetBindings(platform)
+    const retainedBindings = keybindings.filter(
+      existing => !(isKeybinding(existing) && sameBinding(existing, MAC_COPY_BINDING))
+    )
+    const removedLegacyCopyBinding = retainedBindings.length !== keybindings.length
 
     const conflicts = targets.filter(target =>
-      keybindings.some(existing => isKeybinding(existing) && bindingsConflict(existing, target))
+      retainedBindings.some(existing => isKeybinding(existing) && bindingsConflict(existing, target))
     )
 
     if (conflicts.length) {
@@ -352,15 +358,15 @@ export async function configureTerminalKeybindings(
     let added = 0
 
     for (const target of targets.slice().reverse()) {
-      const exists = keybindings.some(existing => isKeybinding(existing) && sameBinding(existing, target))
+      const exists = retainedBindings.some(existing => isKeybinding(existing) && sameBinding(existing, target))
 
       if (!exists) {
-        keybindings.unshift(target)
+        retainedBindings.unshift(target)
         added += 1
       }
     }
 
-    if (!added) {
+    if (!added && !removedLegacyCopyBinding) {
       return {
         success: true,
         message: `${meta.label} terminal keybindings already configured.`
@@ -371,12 +377,19 @@ export async function configureTerminalKeybindings(
       await backupFile(keybindingsFile, ops)
     }
 
-    await ops.writeFile(keybindingsFile, `${JSON.stringify(keybindings, null, 2)}\n`, 'utf8')
+    await ops.writeFile(keybindingsFile, `${JSON.stringify(retainedBindings, null, 2)}\n`, 'utf8')
+
+    const addedSummary = `${added} ${meta.label} terminal keybinding${added === 1 ? '' : 's'}`
+    const changeSummary = removedLegacyCopyBinding
+      ? added
+        ? `Removed the legacy Hermes Cmd+C interception and added ${addedSummary}`
+        : 'Removed the legacy Hermes Cmd+C interception'
+      : `Added ${addedSummary}`
 
     return {
       success: true,
       requiresRestart: true,
-      message: `Added ${added} ${meta.label} terminal keybinding${added === 1 ? '' : 's'} in ${keybindingsFile}`
+      message: `${changeSummary} in ${keybindingsFile}`
     }
   } catch (error) {
     return {
@@ -435,8 +448,14 @@ export async function shouldPromptForTerminalSetup(options?: {
       return true
     }
 
-    return targetBindings(platform).some(
-      target => !parsed.some(existing => isKeybinding(existing) && sameBinding(existing, target))
+    const hasLegacyCopyBinding = parsed.some(
+      existing => isKeybinding(existing) && sameBinding(existing, MAC_COPY_BINDING)
+    )
+    return (
+      hasLegacyCopyBinding ||
+      targetBindings(platform).some(
+        target => !parsed.some(existing => isKeybinding(existing) && sameBinding(existing, target))
+      )
     )
   } catch {
     return true
