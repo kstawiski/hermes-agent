@@ -67,6 +67,25 @@ def test_structured_terminal_code_survives_message_formatter_changes():
     assert classified.should_compress is True
 
 
+def test_message_context_marker_overrides_generic_terminal_code():
+    """A wrapper code must not suppress a context marker that requires compression."""
+    response = SimpleNamespace(
+        status="failed",
+        error=SimpleNamespace(
+            code="max_tokens_exceeded",
+            message="provider wrapper: context_length_exceeded while encoding input",
+        ),
+    )
+
+    error = _codex_terminal_context_error(response)
+
+    assert error is not None
+    assert error.code == "context_length_exceeded"
+    classified = classify_api_error(error)
+    assert classified.reason is FailoverReason.context_overflow
+    assert classified.should_compress is True
+
+
 @pytest.mark.parametrize(
     "status,code",
     [

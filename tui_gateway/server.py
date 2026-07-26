@@ -16002,7 +16002,7 @@ def _(rid, params: dict) -> dict:
             normalized_display = (
                 "/" + display.lstrip("/").replace("_", "-").lower()
             )
-            is_skill = root_command_name and normalized_display in skill_keys
+            is_skill = scan_skills and normalized_display in skill_keys
             items.append(
                 {
                     "text": completion.text,

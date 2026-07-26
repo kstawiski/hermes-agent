@@ -128,8 +128,10 @@ def _codex_terminal_context_error(response: Any) -> Optional[RuntimeError]:
     ):
         return None
 
-    inferred_code = code_lower or _CODEX_CONTEXT_OVERFLOW_CODE
-    return _CodexTerminalResponseError(message, code=inferred_code)
+    # The message marker is a provider-level context signal even when an
+    # intermediary attaches a generic wrapper code. Preserve the classifier's
+    # compression route rather than letting that wrapper code take precedence.
+    return _CodexTerminalResponseError(message, code=_CODEX_CONTEXT_OVERFLOW_CODE)
 
 # Stable prefix of the local interrupt status string emitted when a turn is
 # cancelled while waiting on the provider. Surfaces (ACP, TUI) match on this

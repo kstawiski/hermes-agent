@@ -2114,6 +2114,31 @@ def test_root_slash_completion_surfaces_skills_in_initial_window(server, monkeyp
     assert all("_is_skill" not in item for item in items)
 
 
+def test_inline_slash_reference_preserves_skill_kind(server, monkeypatch):
+    """A post-whitespace `/skill` reference must remain typed as a skill."""
+    import agent.skill_bundles
+    import agent.skill_commands
+
+    monkeypatch.setattr(agent.skill_bundles, "get_skill_bundles", lambda: [])
+    monkeypatch.setattr(
+        agent.skill_commands,
+        "get_skill_commands",
+        lambda: {
+            "/alpha-skill": {"description": "First inline test skill"},
+            "/beta-skill": {"description": "Second inline test skill"},
+        },
+    )
+
+    response = server._methods["complete.slash"](
+        "inline-skill", {"text": "/alpha-skill /beta"}
+    )
+    items = response["result"]["items"]
+    skill = next(item for item in items if item["display"] == "/beta-skill")
+
+    assert response["result"]["replace_from"] == len("/alpha-skill ")
+    assert skill["kind"] == "skill"
+
+
 def test_slash_completion_balancer_preserves_short_result_order(server):
     items = [
         {"text": "new", "display": "/new"},
