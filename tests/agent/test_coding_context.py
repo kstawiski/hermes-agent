@@ -312,6 +312,22 @@ class TestHomeDotfilesGuard:
         assert facts["verifyCommands"] == ["pnpm run test"]
         assert f"- Root: {project}" in cc.build_coding_workspace_block(project)
 
+    def test_temp_root_does_not_inherit_git_or_markers_from_its_parent(
+        self, tmp_path, monkeypatch
+    ):
+        ambient = tmp_path / "ambient"
+        ambient.mkdir()
+        _git_init(ambient)
+        (ambient / "AGENTS.md").write_text("# ambient rules")
+        temp_root = ambient / "tmp"
+        cwd = temp_root / "job"
+        cwd.mkdir(parents=True)
+        monkeypatch.setattr(cc.tempfile, "gettempdir", lambda: str(temp_root))
+
+        cfg = {"agent": {"coding_context": "auto"}}
+        assert cc.is_coding_context(platform="cli", cwd=cwd, config=cfg) is False
+        assert cc.project_facts_for(cwd) is None
+
     def test_on_mode_bypasses_the_guard(self, tmp_path, monkeypatch):
         home = tmp_path / "home"
         home.mkdir()

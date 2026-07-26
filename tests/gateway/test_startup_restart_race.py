@@ -136,6 +136,8 @@ async def test_startup_aborts_when_restart_requested_before_start(tmp_path, monk
     runner.request_restart(detached=False, via_service=True)
     runner._create_adapter = MagicMock()
 
+    assert runner._startup_abort_event.is_set()
+
     result = await asyncio.wait_for(runner.start(), timeout=2)
 
     assert result is True
@@ -146,6 +148,27 @@ async def test_startup_aborts_when_restart_requested_before_start(tmp_path, monk
         call.args[:1] == ("running",)
         for call in runner._update_runtime_status.call_args_list
     )
+
+
+@pytest.mark.asyncio
+async def test_platform_connect_abort_is_distinct_from_connection_failure(tmp_path):
+    runner = make_startup_runner(tmp_path)
+    runner._startup_abort_event = asyncio.Event()
+    runner._platform_connect_timeout_secs = lambda _platform: 60
+    adapter = StartupRaceAdapter(
+        Platform.TELEGRAM,
+        wait_for_disconnect=asyncio.Event(),
+    )
+
+    connect_task = asyncio.create_task(
+        gateway_run.GatewayRunner._connect_adapter_with_timeout(
+            runner, adapter, Platform.TELEGRAM, is_reconnect=True
+        )
+    )
+    await asyncio.sleep(0)
+    runner._startup_abort_event.set()
+
+    assert await asyncio.wait_for(connect_task, timeout=1) is None
 
 
 @pytest.mark.asyncio

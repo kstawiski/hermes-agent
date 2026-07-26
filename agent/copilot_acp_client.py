@@ -28,6 +28,7 @@ from openai.types.chat.chat_completion_message_tool_call import (
 
 from agent.file_safety import get_read_block_error, get_write_denied_error
 from agent.redact import redact_sensitive_text
+from hermes_constants import get_real_home
 from tools.environments.local import hermes_subprocess_env
 
 ACP_MARKER_BASE_URL = "acp://copilot"
@@ -75,8 +76,8 @@ def _resolve_args() -> list[str]:
 
 
 def _resolve_home_dir() -> str:
-    """Return a stable HOME for child ACP processes."""
-    home = os.environ.get("HOME", "").strip()
+    """Return the real credential-bearing HOME for child ACP processes."""
+    home = str(get_real_home()).strip()
     if home:
         return home
 
@@ -104,6 +105,10 @@ def _build_subprocess_env() -> dict[str, str]:
     # provider credentials. Route through the central helper so Tier-1 secrets
     # (gateway bot tokens, GitHub auth, infra) are still stripped (#29157).
     env = hermes_subprocess_env(inherit_credentials=True)
+    # Copilot CLI auth/config lives in the user's real home. This provider is an
+    # intentional exception to generic profile-HOME isolation; retain Tier-1
+    # secret stripping from hermes_subprocess_env but bind HOME to the
+    # authoritative HERMES_REAL_HOME/OS-home value.
     home = _resolve_home_dir()
     env["HOME"] = home
     env["HERMES_REAL_HOME"] = home

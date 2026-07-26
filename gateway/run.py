@@ -4053,7 +4053,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
 
     async def _connect_adapter_with_timeout(
         self, adapter, platform, *, is_reconnect: bool = False
-    ) -> bool:
+    ) -> bool | None:
         """Connect an adapter without allowing one platform to block others.
 
         ``is_reconnect`` is forwarded to ``adapter.connect()`` so platform
@@ -4061,6 +4061,9 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         server-side queue) from a watcher reconnect after a prolonged outage
         (preserve the queue so messages sent during the outage are delivered
         rather than silently dropped — #46621).
+
+        Returns ``None`` when lifecycle restart/shutdown aborts the in-flight
+        connect; callers must not record that as a platform failure.
         """
         timeout = self._platform_connect_timeout_secs(platform)
         if timeout <= 0:
@@ -4104,7 +4107,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         if abort_task is not None and abort_task in done:
             task.cancel()
             task.add_done_callback(consume_detached_task_result)
-            return False
+            return None
         if abort_task is not None:
             abort_task.cancel()
             abort_task.add_done_callback(consume_detached_task_result)
@@ -7395,8 +7398,10 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             return False
         self._restart_requested = True
         startup_abort = getattr(self, "_startup_abort_event", None)
-        if startup_abort is not None:
-            startup_abort.set()
+        if startup_abort is None:
+            startup_abort = asyncio.Event()
+            self._startup_abort_event = startup_abort
+        startup_abort.set()
         self._restart_detached = detached
         self._restart_via_service = via_service
         self._restart_task_started = True
@@ -9296,6 +9301,9 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                     success = await self._connect_adapter_with_timeout(
                         adapter, platform, is_reconnect=True
                     )
+                    if success is None:
+                        await _dispose_unused_adapter(adapter)
+                        return
                     if success:
                         self.adapters[platform] = adapter
                         self._sync_voice_mode_state_to_adapter(adapter)
@@ -10210,6 +10218,9 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                             adapter, platform, is_reconnect=True
                         )
 
+                    if success is None:
+                        await self._safe_adapter_disconnect(adapter, platform)
+                        return
                     if success and self._running:
                         profile_map = self._profile_adapters.setdefault(profile_name, {})
                         if platform not in profile_map:

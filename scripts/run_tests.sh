@@ -52,7 +52,7 @@ VENV=""
 SKIPPED_VENVS=""
 for candidate in "$REPO_ROOT/.venv" "$REPO_ROOT/venv" "$HOME/.hermes/hermes-agent/venv"; do
   if [ -f "$candidate/bin/activate" ]; then
-    if "$candidate/bin/python" -c 'import pytest, acp' 2>/dev/null; then
+    if "$candidate/bin/python" -c 'import pytest, acp, defusedxml' 2>/dev/null; then
       VENV="$candidate"
       break
     fi
@@ -62,14 +62,14 @@ done
 
 if [ -n "$SKIPPED_VENVS" ]; then
   for skipped in $SKIPPED_VENVS; do
-    echo "▶ skipping venv without default test dependencies (pytest, acp): $skipped" >&2
+    echo "▶ skipping venv without default test dependencies (pytest, acp, defusedxml): $skipped" >&2
   done
 fi
 
 if [ -n "$VENV" ]; then
   PYTHON="$VENV/bin/python"
 elif [ -n "${HERMES_PYTHON:-}" ] && [ -x "$HERMES_PYTHON" ] \
-    && "$HERMES_PYTHON" -c 'import pytest, acp' 2>/dev/null; then
+    && "$HERMES_PYTHON" -c 'import pytest, acp, defusedxml' 2>/dev/null; then
   # Guard with an import check: HERMES_PYTHON may point at the RELEASE
   # venv (no pytest) when inherited from a wrapped `hermes` binary rather
   # than the devShell hook.
@@ -77,9 +77,9 @@ elif [ -n "${HERMES_PYTHON:-}" ] && [ -x "$HERMES_PYTHON" ] \
   echo "▶ no local venv — using Nix dev venv via HERMES_PYTHON: $PYTHON"
 else
   echo "error: no virtualenv with default test dependencies found in $REPO_ROOT/.venv or $REPO_ROOT/venv," >&2
-  echo "       and HERMES_PYTHON is not a python with pytest+acp (install .[dev], enter the Nix devShell, or create a venv)" >&2
+  echo "       and HERMES_PYTHON is not a python with pytest+acp+defusedxml (install .[dev], enter the Nix devShell, or create a venv)" >&2
   if [ -n "$SKIPPED_VENVS" ]; then
-    echo "       (skipped for missing pytest/acp:$SKIPPED_VENVS — install dev extras there, or create $REPO_ROOT/.venv)" >&2
+    echo "       (skipped for missing pytest/acp/defusedxml:$SKIPPED_VENVS — install dev extras there, or create $REPO_ROOT/.venv)" >&2
   fi
   exit 1
 fi

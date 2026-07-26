@@ -408,8 +408,11 @@ def _project_git_root(cwd: Path) -> Optional[Path]:
     if root is None or root == _home():
         return None
     try:
-        if root == Path(tempfile.gettempdir()).resolve():
-            return None
+        temp_root = Path(tempfile.gettempdir()).resolve()
+        resolved_cwd = cwd.resolve()
+        if temp_root == resolved_cwd or temp_root in resolved_cwd.parents:
+            if root == temp_root or root in temp_root.parents:
+                return None
     except Exception:
         pass
     return root
@@ -437,7 +440,7 @@ def _marker_root(cwd: Path) -> Optional[Path]:
         if depth > 6:
             break
         if parent == home or (temp_root is not None and parent == temp_root):
-            continue
+            break
         for marker in _PROJECT_MARKERS:
             if (parent / marker).exists():
                 return parent
