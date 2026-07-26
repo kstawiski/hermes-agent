@@ -40,6 +40,7 @@ from gateway.session import (
     build_session_key,
     is_shared_multi_user_session,
 )
+from hermes_constants import is_container
 from hermes_cli.config import atomic_config_write, cfg_get, clear_model_endpoint_credentials
 from utils import (
     atomic_json_write,
@@ -1341,7 +1342,7 @@ class GatewaySlashCommandsMixin:
         from gateway.restart import is_gateway_supervisor_process
 
         _under_service = is_gateway_supervisor_process()
-        _in_container = os.path.exists("/.dockerenv") or os.path.exists("/run/.containerenv")
+        _in_container = is_container()
         if _under_service or _in_container:
             self.request_restart(detached=False, via_service=True)
         else:

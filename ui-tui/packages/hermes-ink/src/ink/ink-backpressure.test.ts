@@ -160,9 +160,10 @@ describe('Ink stdout backpressure coalescing (issue #31486)', () => {
       // coalesced retries, the renderer must force a write through.
       ink.render(React.createElement(Text, null, 'forced'))
 
-      // Drive enough retry ticks to exceed the ceiling.
-      for (let i = 0; i <= MAX_COALESCED_BACKPRESSURE_FRAMES + 2; i++) {
-        vi.advanceTimersByTime(4)
+      // Drive the renderer boundary directly. Timer scheduling/resumption is
+      // covered above; this assertion isolates the exact coalesce ceiling.
+      for (let i = 0; i <= MAX_COALESCED_BACKPRESSURE_FRAMES; i++) {
+        ink.onRender()
       }
 
       // A write was forced through despite the never-firing drain callback.

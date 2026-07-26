@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 import gateway.run as gateway_run
+import gateway.slash_commands as gateway_slash_commands
 from gateway.config import HomeChannel, Platform, PlatformConfig
 from gateway.platforms.base import MessageEvent, MessageType, SendResult
 from gateway.session import build_session_key
@@ -132,6 +133,7 @@ async def test_restart_command_uses_detached_without_systemd(tmp_path, monkeypat
     """Without systemd, /restart uses the detached subprocess approach."""
     monkeypatch.setattr(gateway_run, "_hermes_home", tmp_path)
     monkeypatch.delenv("INVOCATION_ID", raising=False)
+    monkeypatch.setattr(gateway_slash_commands, "is_container", lambda: False)
 
     runner, _adapter = make_restart_runner()
     runner.request_restart = MagicMock(return_value=True)

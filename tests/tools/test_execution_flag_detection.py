@@ -68,6 +68,28 @@ def test_real_binaries_execute_leading_dash_program_payload(
         "MARKER": str(marker),
         "TERM": "xterm",
     }
+
+    if tool == "man":
+        probe_marker = tmp_path / "pager-probe-executed"
+        probe = tmp_path / "pager-probe"
+        probe.write_text(
+            "#!/bin/sh\nprintf executed > \"$PROBE_MARKER\"\ncat\n"
+        )
+        probe.chmod(0o755)
+        probe_env = {**env, "PROBE_MARKER": str(probe_marker)}
+        probe_argv = ["man", "--pager", probe.name, "ls"]
+        if needs_tty:
+            probe_argv = ["script", "-qec", shlex.join(probe_argv), "/dev/null"]
+        subprocess.run(
+            probe_argv,
+            text=True,
+            capture_output=True,
+            env=probe_env,
+            timeout=20,
+        )
+        if not probe_marker.exists():
+            pytest.skip("installed man does not execute pager programs")
+
     argv = [tool, *resolved_args]
     if needs_tty:
         argv = ["script", "-qec", shlex.join(argv), "/dev/null"]

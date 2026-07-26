@@ -19,6 +19,7 @@ from unittest.mock import MagicMock
 import pytest
 
 import gateway.run as gateway_run
+import gateway.slash_commands as gateway_slash_commands
 from gateway.platforms.base import MessageEvent, MessageType
 from gateway.restart import EXTERNAL_GATEWAY_SUPERVISOR_ENV
 from tests.gateway.restart_test_helpers import make_restart_runner, make_restart_source
@@ -40,6 +41,11 @@ def _make_runner_with_mock_restart(tmp_path, monkeypatch):
     monkeypatch.delenv("XPC_SERVICE_NAME", raising=False)
     monkeypatch.delenv("HERMES_S6_SUPERVISED_CHILD", raising=False)
     monkeypatch.delenv(EXTERNAL_GATEWAY_SUPERVISOR_ENV, raising=False)
+    monkeypatch.setattr(
+        gateway_slash_commands,
+        "is_container",
+        lambda: False,
+    )
     runner, _adapter = make_restart_runner()
     runner.request_restart = MagicMock(return_value=True)
     return runner

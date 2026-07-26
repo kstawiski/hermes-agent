@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 
 import pytest
+import agent.lsp.workspace as workspace
 
 from agent.lsp.workspace import (
     clear_cache,
@@ -44,6 +45,16 @@ def test_find_git_worktree_handles_dotgit_file(tmp_path: Path):
     repo.mkdir()
     (repo / ".git").write_text("gitdir: /elsewhere\n")
     assert find_git_worktree(str(repo)) == str(repo)
+
+
+def test_find_git_worktree_ignores_shared_temp_root(tmp_path: Path, monkeypatch):
+    temp_root = tmp_path / "shared-tmp"
+    (temp_root / ".git").mkdir(parents=True)
+    nested = temp_root / "job"
+    nested.mkdir()
+    monkeypatch.setattr(workspace.tempfile, "gettempdir", lambda: str(temp_root))
+
+    assert find_git_worktree(str(nested)) is None
 
 
 def test_is_inside_workspace_true_for_subpath(tmp_path: Path):

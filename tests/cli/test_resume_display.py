@@ -190,7 +190,11 @@ class TestDisplayResumedHistory:
         """
         cli = _make_cli()
         cli.conversation_history = _tool_call_history()
-        output = self._capture_display(cli)
+        import cli as _cli_mod
+        with patch.dict(_cli_mod.__dict__, {"CLI_CONFIG": {
+            "display": {"resume_skip_tool_only": True, "resume_display": "full"}
+        }}):
+            output = self._capture_display(cli)
 
         # The tool-only assistant entry should be skipped
         assert "2 tool calls" not in output

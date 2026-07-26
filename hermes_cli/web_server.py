@@ -1967,8 +1967,17 @@ def _fs_regular_file(path: Path) -> tuple[Path, os.stat_result]:
 
 
 def _fs_find_git_root(start: Path) -> str | None:
-    directory = start
+    directory = start.resolve(strict=False)
+    try:
+        global_roots = {
+            Path.home().resolve(),
+            Path(tempfile.gettempdir()).resolve(),
+        }
+    except (OSError, RuntimeError, ValueError):
+        global_roots = set()
     for _ in range(50):
+        if directory in global_roots:
+            return None
         try:
             if (directory / ".git").exists():
                 return str(directory)

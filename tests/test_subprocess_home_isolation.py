@@ -15,6 +15,13 @@ import threading
 from pathlib import Path
 
 import hermes_constants
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _isolate_inherited_real_home(monkeypatch):
+    """Tests define their own HOME contract; ignore the invoking Hermes profile."""
+    monkeypatch.delenv("HERMES_REAL_HOME", raising=False)
 
 
 

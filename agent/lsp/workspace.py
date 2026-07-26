@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import os
+import tempfile
 from pathlib import Path
 from typing import Iterable, Optional, Tuple
 
@@ -28,6 +29,17 @@ logger = logging.getLogger("agent.lsp.workspace")
 # Cleared on shutdown.  Keyed by absolute resolved path so symlink
 # folds collapse to one entry.
 _workspace_cache: dict = {}
+
+
+def _is_global_root(path: Path) -> bool:
+    """Return True for shared roots that must not become LSP workspaces."""
+    try:
+        resolved = path.resolve()
+        if resolved == Path.home().resolve():
+            return True
+        return resolved == Path(tempfile.gettempdir()).resolve()
+    except (OSError, RuntimeError, ValueError):
+        return False
 
 
 def normalize_path(path: str) -> str:
@@ -70,6 +82,8 @@ def find_git_worktree(start: str) -> Optional[str]:
     # levels.  Caps the walk so a pathological cwd or a symlink cycle
     # we somehow traverse can't keep us looping.
     for _ in range(64):
+        if _is_global_root(cur):
+            break
         git_marker = cur / ".git"
         try:
             if git_marker.exists():

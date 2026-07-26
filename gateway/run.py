@@ -28,6 +28,7 @@ import asyncio
 import concurrent.futures
 import dataclasses
 import faulthandler
+import hashlib
 import inspect
 import json
 import logging
@@ -3368,6 +3369,9 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         self._running = False
         self._gateway_loop: Optional[asyncio.AbstractEventLoop] = None
         self._shutdown_event = asyncio.Event()
+        # Set as soon as shutdown/restart is requested so an in-flight cold
+        # platform connect can abort before the full shutdown drain completes.
+        self._startup_abort_event = asyncio.Event()
         self._exit_cleanly = False
         self._exit_with_failure = False
         self._exit_reason: Optional[str] = None
@@ -4070,15 +4074,40 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         task = asyncio.ensure_future(
             adapter.connect(is_reconnect=is_reconnect)
         )
+        abort_task = None
+        wait_tasks = {task}
+        startup_abort = getattr(self, "_startup_abort_event", None)
+        if startup_abort is None:
+            startup_abort = asyncio.Event()
+            self._startup_abort_event = startup_abort
+        abort_task = asyncio.create_task(startup_abort.wait())
+        wait_tasks.add(abort_task)
         try:
-            done, _pending = await asyncio.wait({task}, timeout=timeout)
+            done, _pending = await asyncio.wait(
+                wait_tasks,
+                timeout=timeout,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
         except asyncio.CancelledError:
             task.cancel()
             task.add_done_callback(consume_detached_task_result)
+            if abort_task is not None:
+                abort_task.cancel()
+                abort_task.add_done_callback(consume_detached_task_result)
             raise
         if task in done:
+            if abort_task is not None:
+                abort_task.cancel()
+                abort_task.add_done_callback(consume_detached_task_result)
             result = await task
             return bool(result)
+        if abort_task is not None and abort_task in done:
+            task.cancel()
+            task.add_done_callback(consume_detached_task_result)
+            return False
+        if abort_task is not None:
+            abort_task.cancel()
+            abort_task.add_done_callback(consume_detached_task_result)
         task.cancel()
         task.add_done_callback(consume_detached_task_result)
         raise TimeoutError(
@@ -7365,6 +7394,9 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         if self._restart_task_started:
             return False
         self._restart_requested = True
+        startup_abort = getattr(self, "_startup_abort_event", None)
+        if startup_abort is not None:
+            startup_abort.set()
         self._restart_detached = detached
         self._restart_via_service = via_service
         self._restart_task_started = True
@@ -9446,6 +9478,9 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         service_restart: bool = False,
     ) -> None:
         """Stop the gateway and disconnect all adapters."""
+        startup_abort = getattr(self, "_startup_abort_event", None)
+        if startup_abort is not None:
+            startup_abort.set()
         # getattr-guard: shutdown-path tests build bare runners via
         # object.__new__ that lack the liveness-guard machinery.
         _stop_guards = getattr(self, "_stop_loop_liveness_guards", None)
@@ -18532,7 +18567,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         "honcho.runtime_peer_prefix",
         "honcho.user_peer_aliases",
     )
-    _HONCHO_CACHE_BUSTING_MEMO: dict[tuple[str, int | None], dict[str, Any]] = {}
+    _HONCHO_CACHE_BUSTING_MEMO: dict[tuple[str, str | None], dict[str, Any]] = {}
 
     @classmethod
     def _empty_honcho_cache_busting_config(cls) -> dict[str, Any]:
@@ -18540,16 +18575,16 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
 
     @classmethod
     def _extract_honcho_cache_busting_config(cls) -> dict[str, Any]:
-        """Extract Honcho identity keys, memoized by honcho.json mtime."""
+        """Extract Honcho identity keys, memoized by honcho.json content."""
         try:
             from plugins.memory.honcho.client import HonchoClientConfig, resolve_config_path
 
             path = resolve_config_path()
             try:
-                mtime_ns = path.stat().st_mtime_ns
+                content_digest = hashlib.sha256(path.read_bytes()).hexdigest()
             except OSError:
-                mtime_ns = None
-            memo_key = (str(path), mtime_ns)
+                content_digest = None
+            memo_key = (str(path), content_digest)
             cached = cls._HONCHO_CACHE_BUSTING_MEMO.get(memo_key)
             if cached is not None:
                 return dict(cached)

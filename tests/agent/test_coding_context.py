@@ -292,6 +292,26 @@ class TestHomeDotfilesGuard:
         cfg = {"agent": {"coding_context": "auto"}}
         assert cc.is_coding_context(platform="cli", cwd=proj, config=cfg) is True
 
+    def test_temp_git_root_does_not_override_nested_manifest_project(
+        self, tmp_path, monkeypatch
+    ):
+        temp_root = tmp_path / "shared-tmp"
+        temp_root.mkdir()
+        _git_init(temp_root)
+        project = temp_root / "job" / "project"
+        project.mkdir(parents=True)
+        (project / "package.json").write_text(
+            json.dumps({"scripts": {"test": "vitest"}})
+        )
+        (project / "pnpm-lock.yaml").write_text("")
+        monkeypatch.setattr(cc.tempfile, "gettempdir", lambda: str(temp_root))
+
+        facts = cc.project_facts_for(project)
+        assert facts is not None
+        assert facts["root"] == str(project)
+        assert facts["verifyCommands"] == ["pnpm run test"]
+        assert f"- Root: {project}" in cc.build_coding_workspace_block(project)
+
     def test_on_mode_bypasses_the_guard(self, tmp_path, monkeypatch):
         home = tmp_path / "home"
         home.mkdir()

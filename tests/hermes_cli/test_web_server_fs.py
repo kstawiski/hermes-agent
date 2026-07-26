@@ -148,6 +148,19 @@ def test_fs_git_root_returns_null_outside_repo(client, tmp_path):
     assert response.json() == {"root": None}
 
 
+def test_fs_git_root_ignores_shared_temp_root(client, tmp_path, monkeypatch):
+    shared_temp = tmp_path / "shared-temp"
+    (shared_temp / ".git").mkdir(parents=True)
+    loose = shared_temp / "job"
+    loose.mkdir()
+    monkeypatch.setattr(web_server.tempfile, "gettempdir", lambda: str(shared_temp))
+
+    response = client.get("/api/fs/git-root", params={"path": str(loose)})
+
+    assert response.status_code == 200
+    assert response.json() == {"root": None}
+
+
 def test_fs_default_cwd_prefers_existing_terminal_cwd(client, tmp_path, monkeypatch):
     monkeypatch.setattr(web_server, "load_config", lambda: {"terminal": {"cwd": str(tmp_path)}})
     monkeypatch.setenv("TERMINAL_CWD", str(tmp_path / "env"))

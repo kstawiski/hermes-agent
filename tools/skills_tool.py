@@ -89,11 +89,10 @@ logger = logging.getLogger(__name__)
 
 # Per-session skill discovery cache.  _find_all_skills() re-reads every
 # SKILL.md on every call; with hundreds of skills this is wasteful.
-# Cache validation (mirrors hermes_cli/profiles.py::_count_skills, d5eee133e):
-#   - signature = per-dir max mtime of the dir AND its immediate children
-#     (one scandir per dir; catches skill add/remove inside categories,
-#     which does NOT bump the root dir's mtime), plus the disabled-set
-#     (config-driven — changes with no filesystem mtime bump at all)
+# Cache validation:
+#   - signature = the sorted indexed SKILL.md path set plus file metadata and
+#     the disabled-set (config-driven); path identity catches add/remove even
+#     when directory timestamps alias or are restored
 #   - a short TTL bounds staleness from in-place SKILL.md edits, which
 #     bump only the file's mtime, invisible to any directory signature.
 # skip_disabled True/False are cached separately.
@@ -104,35 +103,28 @@ _SKILLS_CACHE_KEY_FILTERED = "filtered"
 
 
 def _skills_scan_signature(dirs_to_scan, disabled) -> tuple:
-    """Cheap change-signature for the skill scan inputs.
+    """Content-identity signature for the skill scan inputs.
 
-    O(#dirs + #categories) stat calls, not a recursive walk. Includes the
-    platform the scan's ``skill_matches_platform`` filter will use (read
-    from ``agent.skill_utils``'s ``sys`` so test patches of that module
-    are honored) — the scan result is platform-dependent.
+    Uses the same index iterator as the scan itself, so nested add/remove cannot
+    hide behind coarse directory timestamps. Includes the platform the scan's
+    ``skill_matches_platform`` filter will use (read from
+    ``agent.skill_utils``'s ``sys`` so test patches of that module are honored)
+    because the scan result is platform-dependent.
     """
     from agent import skill_utils as _skill_utils
 
     platform = getattr(getattr(_skill_utils, "sys", None), "platform", "")
     sig = []
     for d in dirs_to_scan:
-        try:
-            m = d.stat().st_mtime
-        except OSError:
-            continue
-        try:
-            with os.scandir(d) as it:
-                for entry in it:
-                    try:
-                        if entry.is_dir(follow_symlinks=False):
-                            em = entry.stat(follow_symlinks=False).st_mtime
-                            if em > m:
-                                m = em
-                    except OSError:
-                        continue
-        except OSError:
-            pass
-        sig.append((str(d), m))
+        indexed = []
+        for skill_file in _skill_utils.iter_skill_index_files(d, "SKILL.md"):
+            try:
+                metadata = skill_file.stat()
+                relative = str(skill_file.relative_to(d))
+                indexed.append((relative, metadata.st_mtime_ns, metadata.st_size))
+            except (OSError, ValueError):
+                continue
+        sig.append((str(d), tuple(indexed)))
     return (tuple(sig), frozenset(disabled), platform)
 
 
@@ -678,7 +670,7 @@ def _find_all_skills(*, skip_disabled: bool = False) -> List[Dict[str, Any]]:
         List of skill metadata dicts (name, description, category).
 
     Results are cached per-session; the cache is invalidated when the scan
-    signature changes (dir/category mtimes or the disabled-set) and expires
+    signature changes (indexed path/file metadata or the disabled-set) and expires
     after a short TTL to bound staleness from in-place SKILL.md edits.
     """
     from agent.skill_utils import get_external_skills_dirs, iter_skill_index_files

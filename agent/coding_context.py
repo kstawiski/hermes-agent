@@ -402,6 +402,19 @@ def _home() -> Optional[Path]:
         return None
 
 
+def _project_git_root(cwd: Path) -> Optional[Path]:
+    """Git root usable as a project signal, excluding shared/global roots."""
+    root = _git_root(cwd)
+    if root is None or root == _home():
+        return None
+    try:
+        if root == Path(tempfile.gettempdir()).resolve():
+            return None
+    except Exception:
+        pass
+    return root
+
+
 def _marker_root(cwd: Path) -> Optional[Path]:
     """Nearest ancestor that looks like a project root, or ``None``.
 
@@ -458,9 +471,7 @@ def _detect_profile_name(mode: str, platform: str, cwd_str: str) -> str:
     # workspace on its own — cheap stat checks, no scan.
     if _marker_root(cwd) is not None:
         return CODING_PROFILE.name
-    git_root = _git_root(cwd)
-    if git_root is not None and git_root == _home():
-        git_root = None  # dotfiles repo at $HOME — not a code workspace
+    git_root = _project_git_root(cwd)
     # A bare git repo only counts when it actually holds code, so `git init` on a
     # notes/writing/research folder stays in the general posture.
     if git_root is not None and _has_code_files(git_root):
@@ -848,7 +859,7 @@ def project_facts_for(cwd: Optional[str | Path] = None) -> Optional[dict[str, An
     re-derive "are we coding?" or duplicate the verify-command sniffing.
     """
     resolved = _resolve_cwd(cwd)
-    root = _git_root(resolved) or _marker_root(resolved)
+    root = _project_git_root(resolved) or _marker_root(resolved)
     if root is None:
         return None
 
@@ -870,7 +881,7 @@ def build_coding_workspace_block(cwd: Optional[str | Path] = None) -> str:
     — so marker-only (non-git) projects still get a snapshot.
     """
     resolved = _resolve_cwd(cwd)
-    git_root = _git_root(resolved)
+    git_root = _project_git_root(resolved)
     root = git_root or _marker_root(resolved)
     if root is None:
         return ""
