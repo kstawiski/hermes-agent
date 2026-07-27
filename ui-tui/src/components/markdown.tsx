@@ -2,7 +2,7 @@ import { Box, Link, stringWidth, Text } from '@hermes/ink'
 import { Fragment, memo, type ReactNode, useMemo } from 'react'
 
 import { ensureEmojiPresentation } from '../lib/emoji.js'
-import { normalizeExternalUrl, urlSlugTitleLabel, useLinkTitle } from '../lib/externalLink.js'
+import { normalizeExternalUrl } from '../lib/externalLink.js'
 import { BOX_CLOSE, BOX_OPEN, texToUnicode } from '../lib/mathUnicode.js'
 import { highlightLine, isHighlightable } from '../lib/syntax.js'
 import type { Theme } from '../theme.js'
@@ -150,12 +150,11 @@ const isTableDivider = (row: string) => {
 const autolinkUrl = (raw: string) =>
   raw.startsWith('mailto:') || raw.startsWith('http') || !raw.includes('@') ? raw : `mailto:${raw}`
 
-const defaultLinkLabel = (url: string) =>
-  url.startsWith('mailto:') ? url.replace(/^mailto:/, '') : /^https?:\/\//i.test(url) ? urlSlugTitleLabel(url) : url
+const defaultLinkLabel = (url: string) => (url.startsWith('mailto:') ? url.replace(/^mailto:/, '') : url)
 
-// A label only counts as authored if it says something the URL doesn't:
 // `[https://example.com](https://example.com)` and `<https://example.com>`
-// are bare links wearing markdown syntax, so they still want a page title.
+// are bare links wearing markdown syntax, so keep the URL visible rather than
+// treating it as authored prose.
 const pickAuthoredLabel = (label: string | undefined, target: string): string | undefined => {
   const trimmed = label?.trim()
 
@@ -168,12 +167,12 @@ interface ResolvedLinkProps {
   url: string
 }
 
-// Title resolution is a fallback for links with no text of their own, not an
-// override — replacing `[Read the RFC](url)` with the page title throws away
-// better wording than we can derive, and mangles labels like `#71706`.
+// The author knows the conversational role of a labelled link, so preserve
+// `[Read the RFC](url)` exactly. Bare and URL-labelled links stay literal so
+// users can see and copy the destination even when terminal hyperlink styling
+// is unavailable or stripped by an embedding harness.
 function ResolvedLink({ authoredLabel, t, url }: ResolvedLinkProps) {
-  const fetched = useLinkTitle(authoredLabel ? null : url)
-  const display = authoredLabel || fetched || defaultLinkLabel(url)
+  const display = authoredLabel || defaultLinkLabel(url)
 
   return (
     <Link url={url}>

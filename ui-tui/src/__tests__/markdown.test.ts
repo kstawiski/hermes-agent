@@ -271,22 +271,34 @@ describe('Md wrapping', () => {
 })
 
 describe('Md link labels', () => {
-  it('renders bare URLs with readable slug labels', () => {
+  it('renders bare URLs verbatim so they remain visible and copyable', () => {
+    const url = 'https://www.expedia.com/things-to-do/puerto-rico-el-yunque-rainforest-adventure'
+
     const lines = renderPlain(
       React.createElement(
         Box,
-        { width: 120 },
+        { width: 80 },
         React.createElement(Md, {
           t: DEFAULT_THEME,
-          text: 'see https://www.expedia.com/things-to-do/puerto-rico-el-yunque-rainforest-adventure for details'
+          text: `see ${url} for details`
         })
       )
     )
 
     const rendered = lines.join('\n')
 
-    expect(rendered).toContain('Puerto Rico El Yunque Rainforest Adventure')
-    expect(rendered).not.toContain('https://www.expedia.com/things-to-do/puerto-rico-el-yunque-rainforest-adventure')
+    expect(rendered).toContain(url)
+    expect(rendered).not.toContain('Puerto Rico El Yunque Rainforest Adventure')
+  })
+
+  it('keeps opaque share links visible instead of collapsing them to an id', () => {
+    const url = 'https://cloud.example.test/s/AbC123XyZ'
+
+    const lines = renderPlain(
+      React.createElement(Box, { width: 80 }, React.createElement(Md, { t: DEFAULT_THEME, text: `Link: ${url}` }))
+    )
+
+    expect(lines.join('\n')).toContain(url)
   })
 
   it('keeps the authored markdown label even when a page title resolves', async () => {
@@ -310,7 +322,7 @@ describe('Md link labels', () => {
     expect(rendered).not.toContain('El Yunque Rainforest Adventure | Expedia')
   })
 
-  it('still resolves titles for links whose label is just the URL', async () => {
+  it('keeps URL-authored markdown labels visible even when a page title resolves', async () => {
     const url = 'https://www.expedia.com/things-to-do/puerto-rico-el-yunque-rainforest-adventure'
 
     await stubFetchedTitle(url, 'Rainforest Adventure Tour')
@@ -319,7 +331,8 @@ describe('Md link labels', () => {
       React.createElement(Box, { width: 120 }, React.createElement(Md, { t: DEFAULT_THEME, text: `[${url}](${url})` }))
     )
 
-    expect(lines.join('\n')).toContain('Rainforest Adventure Tour')
+    expect(lines.join('\n')).toContain(url)
+    expect(lines.join('\n')).not.toContain('Rainforest Adventure Tour')
   })
 })
 
