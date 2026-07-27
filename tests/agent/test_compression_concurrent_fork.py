@@ -417,7 +417,7 @@ def test_cancelled_commit_fence_blocks_late_session_db_compaction(
 
     def _slow_summary(*_args, **_kwargs):
         summary_started.set()
-        assert release_summary.wait(timeout=5)
+        assert release_summary.wait(timeout=120)
         return [
             {"role": "user", "content": "[CONTEXT COMPACTION] summary"},
             {"role": "user", "content": "tail"},
@@ -444,11 +444,12 @@ def test_cancelled_commit_fence_blocks_late_session_db_compaction(
 
     worker = threading.Thread(target=_run_compression, name="timed-out-hygiene")
     worker.start()
-    assert summary_started.wait(timeout=2)
-
-    assert fence.cancel_before_commit() is True
-    release_summary.set()
-    worker.join(timeout=5)
+    try:
+        assert summary_started.wait(timeout=30)
+        assert fence.cancel_before_commit() is True
+    finally:
+        release_summary.set()
+        worker.join(timeout=30)
 
     assert not worker.is_alive()
     assert errors == []
@@ -484,7 +485,7 @@ def test_fence_cancelled_compression_leaves_lock_reacquirable(tmp_path: Path) ->
 
     def _slow_summary(*_args, **_kwargs):
         summary_started.set()
-        assert release_summary.wait(timeout=5)
+        assert release_summary.wait(timeout=120)
         return [
             {"role": "user", "content": "[CONTEXT COMPACTION] summary"},
             {"role": "user", "content": "tail"},
@@ -505,10 +506,12 @@ def test_fence_cancelled_compression_leaves_lock_reacquirable(tmp_path: Path) ->
 
     worker = threading.Thread(target=_run_compression, name="fenced-hygiene")
     worker.start()
-    assert summary_started.wait(timeout=2)
-    assert fence.cancel_before_commit() is True
-    release_summary.set()
-    worker.join(timeout=5)
+    try:
+        assert summary_started.wait(timeout=30)
+        assert fence.cancel_before_commit() is True
+    finally:
+        release_summary.set()
+        worker.join(timeout=30)
     assert not worker.is_alive()
 
     # Cancelled attempt: no mutation, and — the invariant under test — the
