@@ -431,3 +431,50 @@ def test_explicit_k_wins_over_node_id_inference(tmp_path: Path) -> None:
     # -k test_beta wins: one test ran, and it wasn't filtered to nothing.
     assert proc.returncode == 0, proc.stdout
     assert "1 tests passed" in proc.stdout
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX shell launcher")
+def test_shell_launcher_preserves_requested_worker_count(tmp_path: Path) -> None:
+    """The hermetic launcher must not erase an explicit worker limit."""
+    repo_root = Path(__file__).resolve().parent.parent
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    fake_python = tmp_path / "python"
+    fake_python.write_text(
+        "#!/bin/sh\n"
+        "if [ \"${1:-}\" = -c ]; then exit 0; fi\n"
+        "if [ \"${1:-}\" = -m ]; then exit 0; fi\n"
+        "printf 'FORWARDED_TEST_ENV=%s|%s|%s|%s|%s\\n' "
+        "\"${HERMES_TEST_WORKERS-unset}\" "
+        "\"${HERMES_TEST_PATHS-unset}\" "
+        "\"${HERMES_TEST_FILE_TIMEOUT-unset}\" "
+        "\"${HERMES_TEST_FILE_RETRIES-unset}\" "
+        "\"${HERMES_TEST_SLICE-unset}\"\n"
+    )
+    fake_python.chmod(0o755)
+    env = {
+        **os.environ,
+        "HOME": str(fake_home),
+        "HERMES_PYTHON": str(fake_python),
+        "HERMES_TEST_WORKERS": "4",
+        "HERMES_TEST_PATHS": "tests/agent:tests/gateway",
+        "HERMES_TEST_FILE_TIMEOUT": "901",
+        "HERMES_TEST_FILE_RETRIES": "0",
+        "HERMES_TEST_SLICE": "2/3",
+    }
+
+    proc = subprocess.run(
+        ["bash", str(repo_root / "scripts" / "run_tests.sh"), "-q"],
+        cwd=repo_root,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        timeout=60,
+    )
+
+    assert proc.returncode == 0, proc.stdout
+    assert (
+        "FORWARDED_TEST_ENV=4|tests/agent:tests/gateway|901|0|2/3"
+        in proc.stdout
+    )
