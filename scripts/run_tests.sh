@@ -38,22 +38,33 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # ── Locate python ───────────────────────────────────────────────────────────
-# Probe local venvs first; fall back to the Nix devShell's editable venv
-# (HERMES_PYTHON is exported by the devShell hook and ships [dev] extras:
-# pytest, pytest-asyncio, pytest-timeout, ruff, ty).
+# Honour an explicit dev interpreter first, then probe local venvs.
+# HERMES_PYTHON is exported by the Nix devShell hook and ships [dev] extras.
 #
-# A candidate must have pytest INSTALLED, not merely exist. The release venv
-# at ~/.hermes/hermes-agent/venv has bin/activate but no pytest, so an
-# existence-only probe selected it in checkouts/worktrees without a local
-# .venv — every file then died with "No module named pytest" and the run
-# reported "0 tests passed" (which reads green at a glance even though the
-# exit code is 1). Skip such a venv and keep probing instead.
-VENV=""
+# A candidate must have the default test dependencies, not merely pytest.
+# A production venv can include pytest while omitting pytest-asyncio; selecting
+# it makes every async test fail only after the expensive suite has started.
+PYTHON=""
 SKIPPED_VENVS=""
+
+candidate_has_test_runtime() {
+  "$1" -c 'import pytest, pytest_asyncio, acp, defusedxml' 2>/dev/null
+}
+
+if [ -n "${HERMES_PYTHON:-}" ] && [ -x "$HERMES_PYTHON" ]; then
+  if candidate_has_test_runtime "$HERMES_PYTHON"; then
+    PYTHON="$HERMES_PYTHON"
+    echo "▶ using explicit dev venv via HERMES_PYTHON: $PYTHON"
+  else
+    SKIPPED_VENVS="$SKIPPED_VENVS $HERMES_PYTHON"
+  fi
+fi
+
 for candidate in "$REPO_ROOT/.venv" "$REPO_ROOT/venv" "$HOME/.hermes/hermes-agent/venv"; do
+  [ -z "$PYTHON" ] || break
   if [ -f "$candidate/bin/activate" ]; then
-    if "$candidate/bin/python" -c 'import pytest, acp, defusedxml' 2>/dev/null; then
-      VENV="$candidate"
+    if candidate_has_test_runtime "$candidate/bin/python"; then
+      PYTHON="$candidate/bin/python"
       break
     fi
     SKIPPED_VENVS="$SKIPPED_VENVS $candidate"
@@ -62,24 +73,15 @@ done
 
 if [ -n "$SKIPPED_VENVS" ]; then
   for skipped in $SKIPPED_VENVS; do
-    echo "▶ skipping venv without default test dependencies (pytest, acp, defusedxml): $skipped" >&2
+    echo "▶ skipping venv without default test dependencies (pytest, pytest_asyncio, acp, defusedxml): $skipped" >&2
   done
 fi
 
-if [ -n "$VENV" ]; then
-  PYTHON="$VENV/bin/python"
-elif [ -n "${HERMES_PYTHON:-}" ] && [ -x "$HERMES_PYTHON" ] \
-    && "$HERMES_PYTHON" -c 'import pytest, acp, defusedxml' 2>/dev/null; then
-  # Guard with an import check: HERMES_PYTHON may point at the RELEASE
-  # venv (no pytest) when inherited from a wrapped `hermes` binary rather
-  # than the devShell hook.
-  PYTHON="$HERMES_PYTHON"
-  echo "▶ no local venv — using Nix dev venv via HERMES_PYTHON: $PYTHON"
-else
+if [ -z "$PYTHON" ]; then
   echo "error: no virtualenv with default test dependencies found in $REPO_ROOT/.venv or $REPO_ROOT/venv," >&2
-  echo "       and HERMES_PYTHON is not a python with pytest+acp+defusedxml (install .[dev], enter the Nix devShell, or create a venv)" >&2
+  echo "       and HERMES_PYTHON is not a python with pytest+pytest_asyncio+acp+defusedxml (install .[dev], enter the Nix devShell, or create a venv)" >&2
   if [ -n "$SKIPPED_VENVS" ]; then
-    echo "       (skipped for missing pytest/acp/defusedxml:$SKIPPED_VENVS — install dev extras there, or create $REPO_ROOT/.venv)" >&2
+    echo "       (skipped for missing default test dependencies:$SKIPPED_VENVS — install dev extras there, or create $REPO_ROOT/.venv)" >&2
   fi
   exit 1
 fi
@@ -108,7 +110,11 @@ cd "$REPO_ROOT"
 # compiling on first import) avoids redundant work across ~2000 processes.
 # Uses git to list tracked .py files (skips venv, node_modules, etc).
 echo "▶ pre-compiling bytecode cache"
-"$PYTHON" -m compileall -q -j 0 -- $(git ls-files '*.py') >/dev/null 2>&1 || true
+TRACKED_PYTHON=()
+mapfile -d '' -t TRACKED_PYTHON < <(git ls-files -z '*.py')
+if [ "${#TRACKED_PYTHON[@]}" -gt 0 ]; then
+  "$PYTHON" -m compileall -q -j 0 -- "${TRACKED_PYTHON[@]}" >/dev/null 2>&1 || true
+fi
 
 echo "▶ launching test runner"
 exec env -i \

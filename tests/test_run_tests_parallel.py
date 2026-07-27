@@ -434,6 +434,51 @@ def test_explicit_k_wins_over_node_id_inference(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX shell launcher")
+def test_shell_launcher_rejects_runtime_venv_without_pytest_asyncio(
+    tmp_path: Path,
+) -> None:
+    """A production venv with bare pytest must fail before test discovery."""
+    repo_root = tmp_path / "repo"
+    scripts = repo_root / "scripts"
+    scripts.mkdir(parents=True)
+    source_launcher = Path(__file__).resolve().parent.parent / "scripts" / "run_tests.sh"
+    launcher = scripts / "run_tests.sh"
+    launcher.write_bytes(source_launcher.read_bytes())
+
+    fake_home = tmp_path / "home"
+    fake_venv = fake_home / ".hermes" / "hermes-agent" / "venv"
+    (fake_venv / "bin").mkdir(parents=True)
+    (fake_venv / "bin" / "activate").write_text("# fixture\n", encoding="utf-8")
+    fake_python = fake_venv / "bin" / "python"
+    fake_python.write_text(
+        "#!/bin/sh\n"
+        "if [ \"${1:-}\" = -c ]; then\n"
+        "  case \"${2:-}\" in *pytest_asyncio*) exit 1 ;; esac\n"
+        "  exit 0\n"
+        "fi\n"
+        "exit 99\n",
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+    env = {**os.environ, "HOME": str(fake_home)}
+    env.pop("HERMES_PYTHON", None)
+
+    proc = subprocess.run(
+        ["bash", str(launcher), "-q"],
+        cwd=repo_root,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        timeout=30,
+    )
+
+    assert proc.returncode == 1, proc.stdout
+    assert "pytest_asyncio" in proc.stdout
+    assert "launching test runner" not in proc.stdout
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX shell launcher")
 def test_shell_launcher_preserves_requested_worker_count(tmp_path: Path) -> None:
     """The hermetic launcher must not erase an explicit worker limit."""
     repo_root = Path(__file__).resolve().parent.parent
