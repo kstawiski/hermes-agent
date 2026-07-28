@@ -210,6 +210,36 @@ class TestHandleVisionAnalyzeFastPath:
             f"Expected multimodal envelope, got {type(result).__name__}: {str(result)[:200]}"
         assert result.get("_multimodal") is True
 
+    def test_codex_responses_custom_route_skips_aux(self, tmp_path, monkeypatch):
+        img = tmp_path / "x.png"
+        img.write_bytes(_TINY_PNG)
+        cfg = {"custom_providers": [{
+            "name": "codex-lb", "api_mode": "codex_responses",
+            "models": ["gpt-5.6-sol"],
+        }]}
+        monkeypatch.setattr("hermes_cli.config.load_config", lambda: cfg)
+        monkeypatch.setattr(
+            "agent.models_dev.get_model_capabilities",
+            lambda p, m: type("Caps", (), {"supports_vision": True})()
+            if p == "openai-codex" else None,
+        )
+
+        async def forbidden_aux(*args, **kwargs):
+            raise AssertionError("auxiliary vision must not run")
+
+        monkeypatch.setattr("tools.vision_tools.vision_analyze_tool", forbidden_aux)
+        from agent.auxiliary_client import clear_runtime_main, set_runtime_main
+        set_runtime_main("custom:codex-lb", "gpt-5.6-sol")
+        try:
+            coro = _handle_vision_analyze({
+                "image_url": str(img), "question": "inspect",
+            })
+            result = asyncio.get_event_loop().run_until_complete(coro)
+        finally:
+            clear_runtime_main()
+        assert isinstance(result, dict)
+        assert result.get("_multimodal") is True
+
     def test_non_vision_main_model_falls_through_to_aux(self, tmp_path, monkeypatch):
         """Non-vision main model → fast path skipped, aux LLM path attempted."""
         img = tmp_path / "x.png"

@@ -340,3 +340,28 @@ class TestDecideImageInputMode:
             assert decide_image_input_mode("custom", "other-model", cfg) == "text"
         finally:
             clear_runtime_main()
+
+    def test_codex_responses_inherits_canonical_vision(self, monkeypatch):
+        from agent import models_dev
+        from agent.image_routing import decide_image_input_mode
+        seen = []
+
+        def caps(provider, model):
+            seen.append((provider, model))
+            if provider == "openai-codex":
+                return type("Caps", (), {"supports_vision": True})()
+            return None
+
+        monkeypatch.setattr(models_dev, "get_model_capabilities", caps)
+        cfg = {"custom_providers": [{
+            "name": "codex-lb",
+            "api_mode": "codex_responses",
+            "models": ["gpt-5.6-sol"],
+        }]}
+        assert decide_image_input_mode(
+            "custom:codex-lb", "gpt-5.6-sol", cfg
+        ) == "native"
+        assert ("openai-codex", "gpt-5.6-sol") in seen
+        assert decide_image_input_mode(
+            "custom:codex-lb", "undeclared-model", cfg
+        ) == "text"

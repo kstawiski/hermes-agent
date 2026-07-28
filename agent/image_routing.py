@@ -384,6 +384,41 @@ def _explicit_aux_vision_override(cfg: Optional[Dict[str, Any]]) -> bool:
     return True
 
 
+def _custom_capability_provider(
+    cfg: Optional[Dict[str, Any]], provider: str, model: str,
+    requested_provider: str = "",
+) -> str:
+    """Canonical capability provider for an exact custom route."""
+    if not isinstance(cfg, dict):
+        return ""
+    names = []
+    for raw in (requested_provider, provider):
+        name = str(raw or "").strip().lower()
+        if name.startswith("custom:"):
+            name = name.split(":", 1)[1]
+        if name:
+            names.append(name)
+    entries = cfg.get("custom_providers")
+    if not isinstance(entries, list):
+        return ""
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("name") or "").strip().lower() not in names:
+            continue
+        models = entry.get("models")
+        if isinstance(models, dict):
+            declared = model in models
+        elif isinstance(models, list):
+            declared = model in models
+        else:
+            declared = False
+        api_mode = str(entry.get("api_mode") or "").strip().lower()
+        if declared and api_mode == "codex_responses":
+            return "openai-codex"
+    return ""
+
+
 def _lookup_supports_vision(
     provider: str,
     model: str,
@@ -437,6 +472,18 @@ def _lookup_supports_vision(
         logger.debug("image_routing: caps lookup failed for %s:%s — %s", provider, model, exc)
     if caps is not None:
         return bool(caps.supports_vision)
+
+    capability_provider = _custom_capability_provider(
+        cfg, provider, model, requested_provider
+    )
+    if capability_provider:
+        try:
+            from agent.models_dev import get_model_capabilities
+            caps = get_model_capabilities(capability_provider, model)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("custom capability lookup failed: %s", exc)
+        if caps is not None:
+            return bool(caps.supports_vision)
 
     base_url = _resolve_inference_base_url(cfg, provider)
     if not base_url and (provider or "").strip().lower() == "ollama":
