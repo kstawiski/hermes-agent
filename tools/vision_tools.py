@@ -760,7 +760,7 @@ def _resize_image_for_vision(image_path: Path, mime_type: Optional[str] = None,
 # ---------------------------------------------------------------------------
 
 
-def _supports_media_in_tool_results(provider: str, model: str) -> bool:
+def _supports_media_in_tool_results(provider: str, model: str, cfg: Optional[Dict[str, Any]] = None) -> bool:
     """Whether the given provider+model combination accepts image content
     inside a tool-result message.
 
@@ -769,8 +769,6 @@ def _supports_media_in_tool_results(provider: str, model: str) -> bool:
       * Anthropic Messages API (``anthropic`` provider, plus aggregators that
         proxy Claude — ``openrouter``, ``nous``, ``vertex``, ``bedrock``):
         ``tool_result`` blocks accept ``image`` content blocks.
-      * OpenAI Chat Completions: tool messages accept array content with
-        ``image_url`` parts.
       * OpenAI Responses (``openai-codex``): ``function_call_output.output``
         accepts an array of ``input_text``/``input_image`` items.
       * Gemini 3 (and proxied via aggregators): supports multimodal tool
@@ -801,8 +799,9 @@ def _supports_media_in_tool_results(provider: str, model: str) -> bool:
     if p in {"anthropic", "claude", "anthropic-direct"}:
         return True
 
-    # OpenAI Chat Completions and Responses
-    if p in {"openai", "openai-chat", "openai-codex", "azure-openai"}:
+    # OpenAI Responses supports image-bearing function outputs. Chat
+    # Completions tool messages do not: their content is text-only.
+    if p == "openai-codex":
         return True
 
     # Gemini — gate on model name; older Gemini variants did not support
@@ -815,13 +814,11 @@ def _supports_media_in_tool_results(provider: str, model: str) -> bool:
             return True
         return False
 
-    # Check the provider's registered profile for the supports_vision flag.
-    # This covers vision-capable providers like xiaomi, minimax, etc. that
-    # aren't in the hardcoded list above.
+    # Named custom providers inherit only verified transport capability.
+    # Generic model image-input capability is not sufficient for tool results.
     try:
-        from providers import get_provider_profile
-        profile = get_provider_profile(p)
-        if profile is not None and profile.supports_vision:
+        from agent.image_routing import _custom_capability_provider
+        if _custom_capability_provider(cfg, provider, model) == "openai-codex":
             return True
     except Exception:
         pass
@@ -845,7 +842,7 @@ def _should_use_native_vision_fast_path() -> bool:
     """
     try:
         from agent.auxiliary_client import _read_main_provider, _read_main_model
-        from agent.image_routing import decide_image_input_mode, _lookup_supports_vision
+        from agent.image_routing import decide_image_input_mode, _supports_vision_override
         from hermes_cli.config import load_config
 
         provider = _read_main_provider()
@@ -854,8 +851,8 @@ def _should_use_native_vision_fast_path() -> bool:
         if decide_image_input_mode(provider, model, cfg) != "native":
             return False
         return (
-            _supports_media_in_tool_results(provider, model)
-            or _lookup_supports_vision(provider, model, cfg) is True
+            _supports_media_in_tool_results(provider, model, cfg)
+            or _supports_vision_override(cfg, provider, model) is True
         )
     except Exception as exc:
         logger.debug("Native vision fast-path check failed: %s", exc)

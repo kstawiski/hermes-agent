@@ -41,8 +41,8 @@ class TestSupportsMediaInToolResults:
     def test_nous_yes(self):
         assert _supports_media_in_tool_results("nous", "anthropic/claude-sonnet-4.6") is True
 
-    def test_openai_chat_yes(self):
-        assert _supports_media_in_tool_results("openai", "gpt-5.4") is True
+    def test_openai_chat_no(self):
+        assert _supports_media_in_tool_results("openai", "gpt-5.4") is False
 
     def test_openai_codex_yes(self):
         assert _supports_media_in_tool_results("openai-codex", "gpt-5-codex") is True

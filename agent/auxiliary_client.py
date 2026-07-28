@@ -3194,6 +3194,7 @@ _AUTO_PROVIDER_LABELS = {
 
 _MAIN_RUNTIME_FIELDS = ("provider", "model", "base_url", "api_key", "api_mode", "auth_mode")
 _MAIN_RUNTIME_CONTEXT_FIELDS = _MAIN_RUNTIME_FIELDS + ("requested_provider",)
+_MAIN_RUNTIME_CACHE_FIELDS = _MAIN_RUNTIME_CONTEXT_FIELDS
 
 
 def _normalize_main_runtime(main_runtime: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -6450,12 +6451,12 @@ def _client_cache_key(
     _runtime_coupled = (provider or "").strip().lower() in ("auto", "main")
     runtime_key = tuple(
         _runtime_cache_discriminator(field, runtime.get(field, ""))
-        for field in _MAIN_RUNTIME_FIELDS
+        for field in _MAIN_RUNTIME_CACHE_FIELDS
     ) if _runtime_coupled else ()
     # `auto` can now resolve through task-specific or main fallback policy,
     # so the task participates in the cache key. Other providers keep the
     # old cache shape because the explicit provider/model tuple is sufficient.
-    task_key = (task or "") if provider == "auto" else ""
+    task_key = (task or "") if (provider or "").strip().lower() == "auto" else ""
     pool_hint = _pool_cache_hint(provider, main_runtime=main_runtime)
     # The model MUST participate in the key. Two concurrent auxiliary calls to
     # the SAME provider/base_url/key but DIFFERENT models (e.g. a MoA reference

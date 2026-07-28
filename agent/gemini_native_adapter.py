@@ -281,6 +281,7 @@ def _extract_multimodal_parts(content: Any) -> List[Dict[str, Any]]:
         elif ptype == "image_url":
             url = ((item.get("image_url") or {}).get("url") or "")
             if not isinstance(url, str) or not url.startswith("data:"):
+                parts.append({"text": "[Image not transmitted: Gemini native tool results require inline data.]"})
                 continue
             try:
                 header, encoded = url.split(",", 1)
