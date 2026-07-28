@@ -760,7 +760,12 @@ def _resize_image_for_vision(image_path: Path, mime_type: Optional[str] = None,
 # ---------------------------------------------------------------------------
 
 
-def _supports_media_in_tool_results(provider: str, model: str, cfg: Optional[Dict[str, Any]] = None) -> bool:
+def _supports_media_in_tool_results(
+    provider: str,
+    model: str,
+    cfg: Optional[Dict[str, Any]] = None,
+    requested_provider: str = "",
+) -> bool:
     """Whether the given provider+model combination accepts image content
     inside a tool-result message.
 
@@ -818,7 +823,9 @@ def _supports_media_in_tool_results(provider: str, model: str, cfg: Optional[Dic
     # Generic model image-input capability is not sufficient for tool results.
     try:
         from agent.image_routing import _custom_capability_provider
-        if _custom_capability_provider(cfg, provider, model) == "openai-codex":
+        if _custom_capability_provider(
+            cfg, provider, model, requested_provider=requested_provider
+        ) == "openai-codex":
             return True
     except Exception:
         pass
@@ -841,18 +848,29 @@ def _should_use_native_vision_fast_path() -> bool:
     the caller falls back to the legacy aux-LLM path.
     """
     try:
-        from agent.auxiliary_client import _read_main_provider, _read_main_model
+        from agent.auxiliary_client import (
+            _normalize_main_runtime,
+            _read_main_provider,
+            _read_main_model,
+        )
         from agent.image_routing import decide_image_input_mode, _supports_vision_override
         from hermes_cli.config import load_config
 
         provider = _read_main_provider()
         model = _read_main_model()
+        requested_provider = str(
+            _normalize_main_runtime(None).get("requested_provider") or ""
+        )
         cfg = load_config()
         if decide_image_input_mode(provider, model, cfg) != "native":
             return False
         return (
-            _supports_media_in_tool_results(provider, model, cfg)
-            or _supports_vision_override(cfg, provider, model) is True
+            _supports_media_in_tool_results(
+                provider, model, cfg, requested_provider=requested_provider
+            )
+            or _supports_vision_override(
+                cfg, provider, model, requested_provider=requested_provider
+            ) is True
         )
     except Exception as exc:
         logger.debug("Native vision fast-path check failed: %s", exc)
