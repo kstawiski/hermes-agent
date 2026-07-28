@@ -209,7 +209,7 @@ class TestCronDenyModeAllGuards:
 
         from unittest.mock import patch as mock_patch
         with mock_patch("tools.approval._get_cron_approval_mode", return_value="approve"):
-            result = check_all_command_guards("rm -rf /tmp/stuff", "local")
+            result = check_all_command_guards("rm -rf /opt/hermes-cron-approve", "local")
             assert result["approved"]
 
     def test_tirith_content_threat_blocked_in_cron_deny(self, monkeypatch):

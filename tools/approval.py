@@ -16,14 +16,16 @@ import logging
 import os
 import re
 import shlex
+import shutil
 import sys
 import tempfile
 import threading
 import time
 import unicodedata
 from typing import Optional
-from hermes_cli.config import cfg_get
 
+from hermes_cli.config import cfg_get
+from hermes_constants import get_hermes_home
 from tools.interrupt import is_interrupted
 from utils import env_var_enabled, is_truthy_value
 
@@ -2035,6 +2037,104 @@ def _is_verification_artifact_cleanup(command: str) -> bool:
     return re.fullmatch(r"hermes-(?:verify|ad-hoc)-[A-Za-z0-9_.-]+", basename) is not None
 
 
+_RM_OPTIONS_WITHOUT_OPERANDS = {
+    "--dir",
+    "--force",
+    "--interactive",
+    "--no-preserve-root",
+    "--one-file-system",
+    "--preserve-root",
+    "--recursive",
+    "--verbose",
+}
+
+
+def _is_known_rm_option(argument: str) -> bool:
+    if argument in _RM_OPTIONS_WITHOUT_OPERANDS:
+        return True
+    if re.fullmatch(r"-[dfiIRrv]+", argument):
+        return True
+    if argument.startswith("--interactive="):
+        return argument.removeprefix("--interactive=") in {"never", "once", "always"}
+    return argument == "--preserve-root=all"
+
+
+def _is_strict_descendant(root: str, target: str) -> bool:
+    try:
+        return target != root and os.path.commonpath((root, target)) == root
+    except (OSError, TypeError, ValueError):
+        return False
+
+
+_TRUSTED_RM_EXECUTABLES = ("/bin/rm", "/usr/bin/rm")
+
+
+def _is_trusted_rm_executable(executable: str) -> bool:
+    if executable in _TRUSTED_RM_EXECUTABLES:
+        return True
+    if executable != "rm":
+        return False
+
+    resolved = shutil.which(executable)
+    if resolved is None:
+        return False
+    trusted_realpaths = {
+        os.path.realpath(trusted) for trusted in _TRUSTED_RM_EXECUTABLES
+    }
+    return os.path.realpath(resolved) in trusted_realpaths
+
+
+def _is_confined_temp_tree_cleanup(command: str) -> bool:
+    """Return True only for a pure ``rm`` whose targets stay below temp roots."""
+    if any(ord(character) < 32 or ord(character) == 127 for character in command):
+        return False
+    if re.search(r"[;&|<>()`$\\]", command):
+        return False
+
+    try:
+        argv = shlex.split(command, posix=True)
+        if not argv or not _is_trusted_rm_executable(argv[0]):
+            return False
+
+        targets = []
+        options_allowed = True
+        for argument in argv[1:]:
+            if options_allowed and argument == "--":
+                options_allowed = False
+                continue
+            if argument.startswith("-"):
+                if not options_allowed or not _is_known_rm_option(argument):
+                    return False
+                continue
+            options_allowed = False
+            targets.append(argument)
+        if not targets:
+            return False
+
+        filesystem_root = os.path.realpath(os.sep)
+        system_temp_root = os.path.realpath(tempfile.gettempdir())
+        if system_temp_root == filesystem_root:
+            return False
+
+        hermes_home_root = os.path.realpath(get_hermes_home())
+        hermes_temp_root = os.path.realpath(os.path.join(hermes_home_root, "tmp"))
+        roots = {system_temp_root}
+        if _is_strict_descendant(hermes_home_root, hermes_temp_root):
+            roots.add(hermes_temp_root)
+
+        for operand in targets:
+            if any(char in operand for char in "*?[]{}"):
+                return False
+            if not os.path.isabs(operand) or ".." in operand.split(os.sep):
+                return False
+            target = os.path.realpath(operand)
+            if not any(_is_strict_descendant(root, target) for root in roots):
+                return False
+    except (OSError, TypeError, ValueError):
+        return False
+    return True
+
+
 def detect_dangerous_command(command: str) -> tuple:
     """Check if a command matches any dangerous patterns.
 
@@ -3387,6 +3487,12 @@ def check_all_command_guards(command: str, env_type: str,
         return {"approved": True, "message": None}
 
     if _command_matches_permanent_allowlist(command):
+        return {"approved": True, "message": None}
+
+    # A pure rm whose every operand resolves strictly below a disposable temp
+    # root needs no approval. Keep this after hardline and user policy checks so
+    # the narrow exemption cannot override an explicit security decision.
+    if _is_confined_temp_tree_cleanup(command):
         return {"approved": True, "message": None}
 
     is_cli = _is_interactive_cli()

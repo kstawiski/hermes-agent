@@ -221,7 +221,7 @@ class TestAcpExecAskGate:
 
         # Without HERMES_INTERACTIVE: takes auto-approve path, callback NOT called
         result = check_all_command_guards(
-            "rm -rf /tmp/test-exec-ask", "local", approval_callback=fake_cb,
+            "rm -rf /opt/hermes-acp-exec-ask", "local", approval_callback=fake_cb,
         )
         assert result["approved"] is True
         assert called_with == [], (
@@ -233,7 +233,7 @@ class TestAcpExecAskGate:
         monkeypatch.setenv("HERMES_INTERACTIVE", "1")
         called_with.clear()
         result = check_all_command_guards(
-            "rm -rf /tmp/test-exec-ask", "local", approval_callback=fake_cb,
+            "rm -rf /opt/hermes-acp-exec-ask", "local", approval_callback=fake_cb,
         )
         assert called_with, (
             "with HERMES_INTERACTIVE the approval path should consult the "
@@ -272,7 +272,7 @@ class TestAcpExecAskGate:
         tok = set_hermes_interactive_context(True)
         try:
             result = check_all_command_guards(
-                "rm -rf /tmp/test-context-interactive",
+                "rm -rf /opt/hermes-acp-context-interactive",
                 "local",
                 approval_callback=fake_cb,
             )
