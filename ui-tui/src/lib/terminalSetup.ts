@@ -338,9 +338,11 @@ export async function configureTerminalKeybindings(
     }
 
     const targets = targetBindings(platform)
+
     const retainedBindings = keybindings.filter(
       existing => !(isKeybinding(existing) && sameBinding(existing, MAC_COPY_BINDING))
     )
+
     const removedLegacyCopyBinding = retainedBindings.length !== keybindings.length
 
     const conflicts = targets.filter(target =>
@@ -380,6 +382,7 @@ export async function configureTerminalKeybindings(
     await ops.writeFile(keybindingsFile, `${JSON.stringify(retainedBindings, null, 2)}\n`, 'utf8')
 
     const addedSummary = `${added} ${meta.label} terminal keybinding${added === 1 ? '' : 's'}`
+
     const changeSummary = removedLegacyCopyBinding
       ? added
         ? `Removed the legacy Hermes Cmd+C interception and added ${addedSummary}`
@@ -451,6 +454,7 @@ export async function shouldPromptForTerminalSetup(options?: {
     const hasLegacyCopyBinding = parsed.some(
       existing => isKeybinding(existing) && sameBinding(existing, MAC_COPY_BINDING)
     )
+
     return (
       hasLegacyCopyBinding ||
       targetBindings(platform).some(

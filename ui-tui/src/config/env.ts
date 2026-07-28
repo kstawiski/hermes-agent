@@ -38,7 +38,9 @@ export const STARTUP_IMAGE = (process.env.HERMES_TUI_IMAGE ?? '').trim()
 // lib/terminalSetup.ts. Importing that helper here would also import its
 // filesystem-backed setup implementation during boot.
 export const isVsCodeTerminal = (env: NodeJS.ProcessEnv = process.env): boolean =>
-  String(env.TERM_PROGRAM ?? '').trim().toLowerCase() === 'vscode' ||
+  String(env.TERM_PROGRAM ?? '')
+    .trim()
+    .toLowerCase() === 'vscode' ||
   Boolean(String(env.VSCODE_INJECTION ?? '').trim()) ||
   Boolean(String(env.VSCODE_IPC_HOOK_CLI ?? '').trim()) ||
   Boolean(String(env.VSCODE_GIT_ASKPASS_MAIN ?? '').trim()) ||

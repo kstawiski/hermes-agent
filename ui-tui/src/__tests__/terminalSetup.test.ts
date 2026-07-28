@@ -102,6 +102,7 @@ describe('configureTerminalKeybindings', () => {
 
   it('removes only the exact legacy Hermes Cmd+C interception binding', async () => {
     const mkdir = vi.fn().mockResolvedValue(undefined)
+
     const readFile = vi.fn().mockResolvedValue(
       JSON.stringify([
         {
@@ -121,6 +122,7 @@ describe('configureTerminalKeybindings', () => {
         }
       ])
     )
+
     const writeFile = vi.fn().mockResolvedValue(undefined)
     const copyFile = vi.fn().mockResolvedValue(undefined)
 
@@ -427,6 +429,7 @@ describe('configureTerminalKeybindings', () => {
         }
       ])
     )
+
     await expect(
       shouldPromptForTerminalSetup({
         env: { TERM_PROGRAM: 'vscode' } as NodeJS.ProcessEnv,

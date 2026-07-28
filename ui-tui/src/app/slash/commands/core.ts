@@ -695,21 +695,19 @@ export const coreCommands: SlashCommand[] = [
         ctx.transcript.sys(`${reason} — message queued for next turn`)
       }
 
-      ctx.gateway
-        .rpc<SessionSteerResponse>('session.steer', { session_id: ctx.sid, text: payload })
-        .then(
-          ctx.guarded<SessionSteerResponse>(r => {
-            if (r?.status === 'queued') {
-              ctx.transcript.setHistoryItems(prev => [...prev, { role: 'user', text: payload }])
-              ctx.transcript.sys(
-                `steer accepted — next safe point: "${payload.slice(0, 50)}${payload.length > 50 ? '…' : ''}"`
-              )
-            } else {
-              queueFallback('steer rejected')
-            }
-          }),
-          ctx.guarded<unknown>(() => queueFallback('steer failed'))
-        )
+      ctx.gateway.rpc<SessionSteerResponse>('session.steer', { session_id: ctx.sid, text: payload }).then(
+        ctx.guarded<SessionSteerResponse>(r => {
+          if (r?.status === 'queued') {
+            ctx.transcript.setHistoryItems(prev => [...prev, { role: 'user', text: payload }])
+            ctx.transcript.sys(
+              `steer accepted — next safe point: "${payload.slice(0, 50)}${payload.length > 50 ? '…' : ''}"`
+            )
+          } else {
+            queueFallback('steer rejected')
+          }
+        }),
+        ctx.guarded<unknown>(() => queueFallback('steer failed'))
+      )
     }
   },
 

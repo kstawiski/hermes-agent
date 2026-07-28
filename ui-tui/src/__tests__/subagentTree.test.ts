@@ -47,13 +47,12 @@ describe('formatSubagentModel', () => {
   it('renders the exact model in expanded detail without widening the compact header', () => {
     const model = 'openrouter/anthropic/claude-opus-5-xhigh'
 
-    const { screen, height } = renderToScreen(
-      createElement(SubagentModelDetail, { model, t: DEFAULT_THEME }),
-      100
-    )
+    const { screen, height } = renderToScreen(createElement(SubagentModelDetail, { model, t: DEFAULT_THEME }), 100)
 
     const text = Array.from({ length: height }, (_, y) =>
-      Array.from({ length: screen.width }, (_, x) => cellAtIndex(screen, x, y).char).join('').trimEnd()
+      Array.from({ length: screen.width }, (_, x) => cellAtIndex(screen, x, y).char)
+        .join('')
+        .trimEnd()
     ).join('\n')
 
     expect(text).toContain(`model: ${model}`)
