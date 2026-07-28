@@ -2,6 +2,11 @@ import type { SubagentAggregate, SubagentNode, SubagentProgress } from '../types
 
 const ROOT_KEY = '__root__'
 
+/** Render the exact observed delegated model; an absent model stays absent. */
+export function formatSubagentModel(model?: string): string {
+  return model?.trim() ?? ''
+}
+
 /**
  * Reconstruct the subagent spawn tree from a flat event-ordered list.
  *

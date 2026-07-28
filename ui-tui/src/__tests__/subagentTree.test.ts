@@ -1,5 +1,9 @@
+import { createElement } from 'react'
 import { describe, expect, it } from 'vitest'
 
+import { renderToScreen } from '../../packages/hermes-ink/src/ink/render-to-screen.js'
+import { cellAtIndex } from '../../packages/hermes-ink/src/ink/screen.js'
+import { SubagentModelDetail } from '../components/thinking.js'
 import {
   buildSubagentTree,
   descendantIds,
@@ -7,6 +11,7 @@ import {
   fmtCost,
   fmtDuration,
   fmtTokens,
+  formatSubagentModel,
   formatSummary,
   hotnessBucket,
   peakHotness,
@@ -15,6 +20,7 @@ import {
   treeTotals,
   widthByDepth
 } from '../lib/subagentTree.js'
+import { DEFAULT_THEME } from '../theme.js'
 import type { SubagentProgress } from '../types.js'
 
 const makeItem = (overrides: Partial<SubagentProgress> & Pick<SubagentProgress, 'id' | 'index'>): SubagentProgress => ({
@@ -28,6 +34,30 @@ const makeItem = (overrides: Partial<SubagentProgress> & Pick<SubagentProgress, 
   toolCount: 0,
   tools: [],
   ...overrides
+})
+
+describe('formatSubagentModel', () => {
+  it('exposes the exact delegated model without inventing a fallback', () => {
+    expect(formatSubagentModel('gpt-5.6-sol')).toBe('gpt-5.6-sol')
+    expect(formatSubagentModel('  claude-opus-5  ')).toBe('claude-opus-5')
+    expect(formatSubagentModel()).toBe('')
+    expect(formatSubagentModel('   ')).toBe('')
+  })
+
+  it('renders the exact model in expanded detail without widening the compact header', () => {
+    const model = 'openrouter/anthropic/claude-opus-5-xhigh'
+
+    const { screen, height } = renderToScreen(
+      createElement(SubagentModelDetail, { model, t: DEFAULT_THEME }),
+      100
+    )
+
+    const text = Array.from({ length: height }, (_, y) =>
+      Array.from({ length: screen.width }, (_, x) => cellAtIndex(screen, x, y).char).join('').trimEnd()
+    ).join('\n')
+
+    expect(text).toContain(`model: ${model}`)
+  })
 })
 
 describe('aggregate: tokens, cost, files, hotness', () => {

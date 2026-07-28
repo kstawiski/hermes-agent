@@ -8,6 +8,7 @@ import {
   buildSubagentTree,
   fmtTokens,
   formatSummary as formatSpawnSummary,
+  formatSubagentModel,
   hotnessBucket,
   peakHotness,
   sparkline,
@@ -277,6 +278,16 @@ function heatColor(node: SubagentNode, peak: number, theme: Theme): string | und
   return palette[idx]
 }
 
+export function SubagentModelDetail({ model, t }: { model?: string; t: Theme }) {
+  const label = formatSubagentModel(model)
+
+  return label ? (
+    <Text color={t.color.muted}>
+      model: <Text color={t.color.text}>{label}</Text>
+    </Text>
+  ) : null
+}
+
 function SubagentAccordion({
   branch,
   expanded,
@@ -387,12 +398,23 @@ function SubagentAccordion({
   const hasNotes = noteRows.length > 0
   const noteColor = statusTone === 'error' ? t.color.error : statusTone === 'warn' ? t.color.warn : t.color.muted
 
+  const modelLabel = formatSubagentModel(item.model)
+
   const sections: {
     header: ReactNode
     key: string
     open: boolean
     render: (rails: boolean[]) => ReactNode
   }[] = []
+
+  if (modelLabel) {
+    sections.push({
+      header: <SubagentModelDetail model={item.model} t={t} />,
+      key: 'model',
+      open: false,
+      render: () => null
+    })
+  }
 
   if (hasThinking) {
     sections.push({
