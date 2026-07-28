@@ -288,6 +288,25 @@ def test_native_client_uses_x_goog_api_key_and_native_models_endpoint(monkeypatc
     assert response.choices[0].message.content == "hello"
 
 
+def test_native_client_rejects_non_gemini_model_before_http():
+    from agent.gemini_native_adapter import GeminiModelContractError, GeminiNativeClient
+
+    calls = []
+
+    class BombHTTP:
+        def post(self, *args, **kwargs):
+            calls.append((args, kwargs))
+            raise AssertionError("HTTP must not run")
+
+    client = GeminiNativeClient(api_key="AIza-test", http_client=BombHTTP())  # type: ignore[arg-type]
+    with pytest.raises(GeminiModelContractError, match="gpt-5.6-sol"):
+        client.chat.completions.create(
+            model="gpt-5.6-sol",
+            messages=[{"role": "user", "content": "inspect"}],
+        )
+    assert calls == []
+
+
 @pytest.mark.parametrize("model, expected", [
     ("google/gemini-2.0-flash", "gemini-2.0-flash"),
     ("gemini/gemini-3-pro-preview", "gemini-3-pro-preview"),

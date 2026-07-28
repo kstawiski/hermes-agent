@@ -59,6 +59,20 @@ def bare_gemini_model_id(model: str) -> str:
     return name
 
 
+class GeminiModelContractError(ValueError):
+    """Model identifier is incompatible with Gemini's native endpoint."""
+
+
+def native_gemini_model_id(model: str) -> str:
+    name = bare_gemini_model_id(model)
+    lowered = name.lower()
+    if lowered.startswith(("gemini-", "models/gemini-", "tunedmodels/")):
+        return name
+    raise GeminiModelContractError(
+        f"Gemini native endpoint cannot serve model {model!r}"
+    )
+
+
 def is_native_gemini_base_url(base_url: str) -> bool:
     """Return True when the endpoint speaks Gemini's native REST API."""
     normalized = str(base_url or "").strip().rstrip("/").lower()
@@ -94,6 +108,7 @@ def probe_gemini_tier(
     if normalized_base.lower().endswith("/openai"):
         normalized_base = normalized_base[: -len("/openai")]
 
+    model = native_gemini_model_id(model)
     url = f"{normalized_base}/models/{model}:generateContent"
     payload = {
         "contents": [{"role": "user", "parts": [{"text": "hi"}]}],
@@ -1004,7 +1019,7 @@ class GeminiNativeClient:
             thinking_config=thinking_config,
         )
 
-        model = bare_gemini_model_id(model)
+        model = native_gemini_model_id(model)
         if stream:
             return self._stream_completion(model=model, request=request, timeout=timeout)
 
