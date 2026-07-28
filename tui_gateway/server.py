@@ -10875,6 +10875,10 @@ def _(rid, params: dict) -> dict:
     if err:
         return err
     agent = session.get("agent")
+    if agent is None and session.get("running"):
+        _enqueue_prompt(session, text, current_transport() or _stdio_transport)
+        session["last_active"] = time.time()
+        return _ok(rid, {"status": "queued", "text": text})
     if agent is None or not hasattr(agent, "steer"):
         return _err(rid, 4010, "agent does not support steer")
     try:

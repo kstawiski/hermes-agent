@@ -690,20 +690,26 @@ export const coreCommands: SlashCommand[] = [
         return
       }
 
+      const queueFallback = (reason: string) => {
+        ctx.composer.enqueue(payload)
+        ctx.transcript.sys(`${reason} — message queued for next turn`)
+      }
+
       ctx.gateway
         .rpc<SessionSteerResponse>('session.steer', { session_id: ctx.sid, text: payload })
         .then(
           ctx.guarded<SessionSteerResponse>(r => {
             if (r?.status === 'queued') {
+              ctx.transcript.setHistoryItems(prev => [...prev, { role: 'user', text: payload }])
               ctx.transcript.sys(
-                `steer queued — arrives after next tool call: "${payload.slice(0, 50)}${payload.length > 50 ? '…' : ''}"`
+                `steer accepted — next safe point: "${payload.slice(0, 50)}${payload.length > 50 ? '…' : ''}"`
               )
             } else {
-              ctx.transcript.sys('steer rejected')
+              queueFallback('steer rejected')
             }
-          })
+          }),
+          ctx.guarded<unknown>(() => queueFallback('steer failed'))
         )
-        .catch(ctx.guardedErr)
     }
   },
 

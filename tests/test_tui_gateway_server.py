@@ -7687,6 +7687,28 @@ def test_session_steer_rejects_empty_text():
     assert resp["error"]["code"] == 4002
 
 
+def test_session_steer_queues_while_agent_is_being_built():
+    session = _session()
+    session["agent"] = None
+    session["running"] = True
+    server._sessions["sid"] = session
+    try:
+        resp = server.handle_request(
+            {
+                "id": "1",
+                "method": "session.steer",
+                "params": {"session_id": "sid", "text": "keep this"},
+            }
+        )
+    finally:
+        server._sessions.pop("sid", None)
+
+    assert resp["result"]["status"] == "queued"
+    queued = session.get("queued_prompt")
+    assert isinstance(queued, dict)
+    assert queued["text"] == "keep this"
+
+
 def test_session_steer_errors_when_agent_has_no_steer_method():
     server._sessions["sid"] = _session(agent=types.SimpleNamespace())  # no steer()
     try:
