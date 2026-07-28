@@ -88,7 +88,7 @@ export function useSubmission(opts: UseSubmissionOptions) {
   }, [composerState.input, composerState.inputBuf])
 
   const send = useCallback(
-    (text: string, showUserMessage = true, displayText?: string) => {
+    (text: string, showUserMessage = true, displayText?: string, queueOnly = false) => {
       const expand = expandSnips(composerState.pasteSnips)
 
       submitPrompt(
@@ -102,7 +102,8 @@ export function useSubmission(opts: UseSubmissionOptions) {
           sys
         },
         showUserMessage,
-        displayText
+        displayText,
+        queueOnly
       )
     },
     [appendMessage, composerActions, composerState.pasteSnips, gw, setLastUserMsg, sys]
@@ -167,10 +168,10 @@ export function useSubmission(opts: UseSubmissionOptions) {
       if (hasInterpolation(text)) {
         patchUiState({ busy: true })
 
-        return interpolate(text, send)
+        return interpolate(text, result => send(result, true, undefined, true))
       }
 
-      send(text)
+      send(text, true, undefined, true)
     },
     [interpolate, send, shellExec]
   )

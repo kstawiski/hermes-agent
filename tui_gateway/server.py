@@ -6772,7 +6772,14 @@ def _interrupt_busy_session(sid: str, session: dict, agent: Any) -> None:
 
 
 def _handle_busy_submit(
-    rid, sid: str, session: dict, text: Any, transport: Any, queued: bool = False
+    rid,
+    sid: str,
+    session: dict,
+    text: Any,
+    transport: Any,
+    queued: bool = False,
+    *,
+    queue_only: bool = False,
 ) -> dict | None:
     """Apply the ``display.busy_input_mode`` policy to a prompt that lands while
     a turn is in flight, instead of rejecting it with ``session busy``.
@@ -6793,7 +6800,7 @@ def _handle_busy_submit(
     unwinding the turn) redirected the live turn with next-turn text — queue
     semantics betrayed by a millisecond race the user can't see.
     """
-    mode = "queue" if queued else _load_busy_input_mode()
+    mode = "queue" if queued or queue_only else _load_busy_input_mode()
     agent = session.get("agent")
     with session["history_lock"]:
         if not session.get("running"):
@@ -10991,8 +10998,13 @@ def _(rid, params: dict) -> dict:
             else:
                 break
         busy_response = _handle_busy_submit(
-            rid, sid, session, text, busy_transport,
+            rid,
+            sid,
+            session,
+            text,
+            busy_transport,
             queued=bool(params.get("queued")),
+            queue_only=params.get("queue_only") is True,
         )
         if busy_response is not None:
             return busy_response
@@ -12437,16 +12449,6 @@ def _run_prompt_submit(
         # A user prompt that arrived mid-turn (interrupt + queue) wins over
         # every auto follow-up below — drain it first and skip them this cycle;
         # the goal judge / notifications re-evaluate at the end of that turn.
-        # Leftover /steer: the steer arrived after the last tool batch (e.g.
-        # during the final API call), so the agent couldn't inject it and
-        # returned it in result["pending_steer"]. Requeue it as the next turn
-        # so it isn't silently dropped — same rule as cli.py and gateway/run.py.
-        # A real queued prompt still wins: the merge in _enqueue_prompt keeps
-        # both texts.
-        _leftover_steer = result.get("pending_steer") if isinstance(result, dict) else None
-        if isinstance(_leftover_steer, str) and _leftover_steer.strip():
-            with session["history_lock"]:
-                _enqueue_prompt(session, _leftover_steer, session.get("transport"))
         if _drain_queued_prompt(rid, sid, session):
             return
 

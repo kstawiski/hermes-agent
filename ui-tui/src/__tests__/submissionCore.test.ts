@@ -108,6 +108,21 @@ describe('submissionCore.submitPrompt — synchronous busy (queue-race fix)', ()
 
     expect(calls).toContain('prompt.submit')
   })
+
+  it('marks an explicit next-turn drain on prompt.submit', async () => {
+    const { gw, resolveDrop } = makeDeferredGateway()
+
+    submitPrompt('later', makeDeps(gw), true, undefined, true)
+    resolveDrop({ matched: false })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(gw.request).toHaveBeenCalledWith('prompt.submit', {
+      session_id: 'sess-1',
+      text: 'later',
+      queue_only: true
+    })
+  })
 })
 
 describe('submissionCore.markSubmitting', () => {

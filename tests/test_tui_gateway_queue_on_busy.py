@@ -101,6 +101,27 @@ def test_busy_interrupt_mode_redirects_active_turn(monkeypatch):
     assert session.get("queued_prompt") is None
 
 
+def test_explicit_queue_only_bypasses_redirect_and_interrupt(monkeypatch):
+    monkeypatch.setattr(server, "_load_busy_input_mode", lambda: "interrupt")
+    agent = types.SimpleNamespace(
+        _supports_active_turn_redirect=True,
+        redirect=lambda _text: (_ for _ in ()).throw(
+            AssertionError("queue_only must not redirect")
+        ),
+        interrupt=lambda: (_ for _ in ()).throw(
+            AssertionError("queue_only must not interrupt")
+        ),
+    )
+    session = _session(agent=agent, running=True)
+
+    response = server._handle_busy_submit(
+        "rid", "sid", session, "later", None, queue_only=True
+    )
+
+    assert response["result"]["status"] == "queued"
+    assert session["queued_prompt"]["text"] == "later"
+
+
 def test_busy_interrupt_mode_falls_back_for_legacy_agent(monkeypatch):
     monkeypatch.setattr(server, "_load_busy_input_mode", lambda: "interrupt")
     calls = {"interrupt": 0}

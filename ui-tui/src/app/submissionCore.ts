@@ -50,7 +50,8 @@ export function submitPrompt(
   text: string,
   deps: SubmitPromptDeps,
   showUserMessage = true,
-  displayOverride?: string
+  displayOverride?: string,
+  queueOnly = false
 ): void {
   const sid = getUiState().sid
 
@@ -80,7 +81,11 @@ export function submitPrompt(
     turnController.interrupted = false
 
     deps.gw
-      .request<PromptSubmitResponse>('prompt.submit', { session_id: liveSid, text: submitText })
+      .request<PromptSubmitResponse>('prompt.submit', {
+        session_id: liveSid,
+        text: submitText,
+        ...(queueOnly ? { queue_only: true } : {})
+      })
       .catch((e: Error) => {
         // Defensive: prompt.submit no longer rejects a mid-turn send with
         // "session busy" (the gateway queues it and returns success), but keep

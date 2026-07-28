@@ -47,6 +47,22 @@ def _guard_with_denied_prompt(command: str) -> tuple[dict, Mock]:
     return result, callback
 
 
+@pytest.mark.parametrize("env_type", ["ssh", "docker", "modal"])
+def test_temp_rm_exemption_is_local_only(temp_roots, manual_guards, env_type, monkeypatch):
+    system_root, _ = temp_roots
+    monkeypatch.setenv("HERMES_EXEC_ASK", "1")
+    temp_check = Mock(side_effect=AssertionError("non-local backend evaluated local temp exemption"))
+    monkeypatch.setattr(approval, "_is_confined_temp_tree_cleanup", temp_check)
+    callback = Mock(return_value="deny")
+    result = approval.check_all_command_guards(
+        f"rm -rf {system_root / 'remote-tree'}",
+        env_type,
+        approval_callback=callback,
+    )
+    assert isinstance(result["approved"], bool)
+    temp_check.assert_not_called()
+
+
 @pytest.mark.parametrize(
     "command_factory",
     [

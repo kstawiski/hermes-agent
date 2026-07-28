@@ -69,8 +69,16 @@ def native_gemini_model_id(model: str) -> str:
     if lowered.startswith(("gemini-", "models/gemini-", "tunedmodels/")):
         return name
     raise GeminiModelContractError(
-        f"Gemini native endpoint cannot serve model {model!r}"
+        f"Gemini native transport cannot use model {model!r}; expected a Gemini model id"
     )
+
+
+def _native_gemini_model_resource(model: str) -> str:
+    """Return one canonical Gemini REST resource without double ``models/``."""
+    name = native_gemini_model_id(model)
+    if name.lower().startswith(("models/", "tunedmodels/")):
+        return name
+    return f"models/{name}"
 
 
 def is_native_gemini_base_url(base_url: str) -> bool:
@@ -108,8 +116,8 @@ def probe_gemini_tier(
     if normalized_base.lower().endswith("/openai"):
         normalized_base = normalized_base[: -len("/openai")]
 
-    model = native_gemini_model_id(model)
-    url = f"{normalized_base}/models/{model}:generateContent"
+    model_resource = _native_gemini_model_resource(model)
+    url = f"{normalized_base}/{model_resource}:generateContent"
     payload = {
         "contents": [{"role": "user", "parts": [{"text": "hi"}]}],
         "generationConfig": {"maxOutputTokens": 1},
@@ -371,15 +379,21 @@ def _build_gemini_contents(messages: List[Dict[str, Any]]) -> tuple[List[Dict[st
             continue
 
         if role in {"tool", "function"}:
+            tool_parts = [
+                _translate_tool_result_to_gemini(
+                    msg,
+                    tool_name_by_call_id=tool_name_by_call_id,
+                )
+            ]
+            tool_parts.extend(
+                part
+                for part in _extract_multimodal_parts(msg.get("content"))
+                if "inlineData" in part
+            )
             contents.append(
                 {
                     "role": "user",
-                    "parts": [
-                        _translate_tool_result_to_gemini(
-                            msg,
-                            tool_name_by_call_id=tool_name_by_call_id,
-                        )
-                    ],
+                    "parts": tool_parts,
                 }
             )
             continue
@@ -1019,11 +1033,11 @@ class GeminiNativeClient:
             thinking_config=thinking_config,
         )
 
-        model = native_gemini_model_id(model)
+        model_resource = _native_gemini_model_resource(model)
         if stream:
-            return self._stream_completion(model=model, request=request, timeout=timeout)
+            return self._stream_completion(model=model_resource, request=request, timeout=timeout)
 
-        url = f"{self.base_url}/models/{model}:generateContent"
+        url = f"{self.base_url}/{model_resource}:generateContent"
         response = self._http.post(url, json=request, headers=self._headers(), timeout=timeout)
         if response.status_code != 200:
             raise gemini_http_error(response)
@@ -1036,10 +1050,10 @@ class GeminiNativeClient:
                 status_code=response.status_code,
                 response=response,
             ) from exc
-        return translate_gemini_response(payload, model=model)
+        return translate_gemini_response(payload, model=model_resource)
 
     def _stream_completion(self, *, model: str, request: Dict[str, Any], timeout: Any = None) -> Iterator[_GeminiStreamChunk]:
-        url = f"{self.base_url}/models/{model}:streamGenerateContent?alt=sse"
+        url = f"{self.base_url}/{model}:streamGenerateContent?alt=sse"
         stream_headers = dict(self._headers())
         stream_headers["Accept"] = "text/event-stream"
 

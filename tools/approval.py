@@ -3492,7 +3492,7 @@ def check_all_command_guards(command: str, env_type: str,
     # A pure rm whose every operand resolves strictly below a disposable temp
     # root needs no approval. Keep this after hardline and user policy checks so
     # the narrow exemption cannot override an explicit security decision.
-    if _is_confined_temp_tree_cleanup(command):
+    if env_type == "local" and _is_confined_temp_tree_cleanup(command):
         return {"approved": True, "message": None}
 
     is_cli = _is_interactive_cli()

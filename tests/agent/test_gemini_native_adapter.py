@@ -160,6 +160,53 @@ def test_parallel_tool_results_merge_into_one_user_content():
     assert outputs == ["AAA", "BBB"]
 
 
+def test_tool_result_preserves_inline_image_part():
+    from agent.gemini_native_adapter import _build_gemini_contents
+
+    contents, _ = _build_gemini_contents(
+        [
+            {"role": "assistant", "tool_calls": [{
+                "id": "call_1",
+                "function": {"name": "vision_analyze", "arguments": "{}"},
+            }]},
+            {
+                "role": "tool",
+                "tool_call_id": "call_1",
+                "content": [
+                    {"type": "text", "text": "inspect"},
+                    {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="}},
+                ],
+            },
+        ]
+    )
+    parts = contents[-1]["parts"]
+    assert any("functionResponse" in part for part in parts)
+    assert any(part.get("inlineData", {}).get("mimeType") == "image/png" for part in parts)
+
+
+@pytest.mark.parametrize(
+    ("model", "suffix"),
+    [
+        ("gemini-2.5-flash", "/models/gemini-2.5-flash:generateContent"),
+        ("models/gemini-2.5-flash", "/models/gemini-2.5-flash:generateContent"),
+        ("tunedModels/my-tune", "/tunedModels/my-tune:generateContent"),
+    ],
+)
+def test_native_client_builds_one_canonical_model_resource(model, suffix):
+    from agent.gemini_native_adapter import GeminiNativeClient
+
+    recorded = {}
+
+    class DummyHTTP:
+        def post(self, url, **_kwargs):
+            recorded["url"] = url
+            return type("Response", (), {"status_code": 200, "json": lambda self: {"candidates": []}})()
+
+    client = GeminiNativeClient(api_key="AIza-test", http_client=DummyHTTP())
+    client.chat.completions.create(model=model, messages=[{"role": "user", "content": "hi"}])
+    assert recorded["url"].endswith(suffix)
+
+
 def test_consecutive_user_messages_merge_for_gemini_alternation():
     """Back-to-back user messages must also be merged, not sent as two
     consecutive user contents."""

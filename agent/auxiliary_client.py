@@ -5183,8 +5183,24 @@ def resolve_provider_client(
     # which aliases to "kimi-coding") is still reachable via the named-custom
     # branch below.
     original_provider = (provider or "").strip().lower()
-    # Normalise aliases
-    provider = _normalize_aux_provider(provider)
+    if original_provider == "main" and isinstance(main_runtime, dict):
+        runtime_requested = str(main_runtime.get("requested_provider") or "").strip().lower()
+        runtime_effective = str(main_runtime.get("provider") or "").strip().lower()
+        runtime_provider = (
+            runtime_effective
+            if runtime_effective not in {"", "auto", "main"}
+            else runtime_requested
+        )
+        if runtime_provider not in {"", "auto", "main"}:
+            original_provider = runtime_provider
+            provider = _normalize_aux_provider(runtime_provider)
+            if not model:
+                model = str(main_runtime.get("model") or "") or model
+        else:
+            provider = _normalize_aux_provider(provider)
+    else:
+        # Normalise aliases
+        provider = _normalize_aux_provider(provider)
 
     # MoA virtual provider chokepoint: "moa" is not a real HTTP provider —
     # its acting model is the preset's aggregator slot. The two resolver

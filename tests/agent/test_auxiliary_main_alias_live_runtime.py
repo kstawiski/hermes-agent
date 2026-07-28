@@ -95,6 +95,29 @@ def test_main_alias_client_not_reused_across_runtime_shape_change():
     assert "codex-lb.test" in str(second_client._real_client.base_url)
 
 
+def test_direct_main_resolver_prefers_live_runtime_provider(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key-not-a-secret")
+
+    def stale_provider_must_not_be_read():
+        raise AssertionError("persisted main provider must not override live runtime")
+
+    monkeypatch.setattr(aux, "_read_main_provider", stale_provider_must_not_be_read)
+    with patch.object(aux, "OpenAI") as openai_cls:
+        openai_cls.return_value = MagicMock()
+        client, model = aux.resolve_provider_client(
+            "main",
+            model="openai/gpt-5.6-sol",
+            main_runtime={
+                "provider": "openrouter",
+                "requested_provider": "openrouter",
+                "model": "openai/gpt-5.6-sol",
+            },
+        )
+
+    assert client is not None
+    assert model == "openai/gpt-5.6-sol"
+
+
 def test_main_alias_client_reused_when_runtime_unchanged():
     """Unchanged live runtime keeps hitting the same cached ``main`` client."""
     aux.set_runtime_main(**_codex_runtime())
