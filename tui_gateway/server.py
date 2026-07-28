@@ -6708,6 +6708,34 @@ def _enqueue_prompt(session: dict, text: Any, transport: Any) -> None:
     session["queued_prompt"] = {"text": text, "transport": transport}
 
 
+def _recover_pending_steer(session: dict, result: Any) -> bool:
+    """Queue a steer that arrived after the turn's final injectable boundary.
+
+    ``AIAgent.run_conversation`` returns ``pending_steer`` when final-answer
+    streaming completes before another tool batch can consume the injected user
+    text.  Preserve that text as the next turn instead of silently dropping a
+    steer that the TUI already accepted and displayed.  If the user also queued
+    a later prompt, the earlier steer stays first and the latest transport
+    remains pinned for the combined follow-up.
+    """
+    if not isinstance(result, dict):
+        return False
+    text = result.get("pending_steer")
+    if not isinstance(text, str) or not text.strip():
+        return False
+
+    existing = session.get("queued_prompt")
+    if isinstance(existing, dict) and isinstance(existing.get("text"), str):
+        queued_text = existing["text"]
+        text = f"{text}\n\n{queued_text}" if queued_text else text
+        transport = existing.get("transport")
+    else:
+        transport = session.get("transport")
+
+    session["queued_prompt"] = {"text": text, "transport": transport}
+    return True
+
+
 def _interrupt_busy_session(sid: str, session: dict, agent: Any) -> None:
     """Interrupt a busy turn without blocking the RPC reader or session lock.
 
@@ -12185,6 +12213,7 @@ def _run_prompt_submit(
                     turn_error_retained = True
                 else:
                     _clear_inflight_turn(session)
+                _recover_pending_steer(session, result)
             if status == "error":
                 payload["error"] = str(
                     (result.get("error") if isinstance(result, dict) else "") or raw

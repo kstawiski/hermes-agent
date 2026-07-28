@@ -47,6 +47,35 @@ def test_enqueue_merges_second_arrival_losslessly():
     assert session["queued_prompt"]["transport"] == "ws-2"
 
 
+def test_recover_pending_steer_queues_unconsumed_text_for_next_turn():
+    session = _session(transport="ws-current")
+
+    assert server._recover_pending_steer(session, {"pending_steer": "change the endpoint"})
+    assert session["queued_prompt"] == {
+        "text": "change the endpoint",
+        "transport": "ws-current",
+    }
+
+
+def test_recover_pending_steer_preserves_chronological_order_before_existing_queue():
+    session = _session(transport="ws-current")
+    server._enqueue_prompt(session, "run tests after that", "ws-latest")
+
+    assert server._recover_pending_steer(session, {"pending_steer": "change the endpoint"})
+    assert session["queued_prompt"] == {
+        "text": "change the endpoint\n\nrun tests after that",
+        "transport": "ws-latest",
+    }
+
+
+def test_recover_pending_steer_ignores_missing_or_blank_values():
+    session = _session(transport="ws-current")
+
+    assert not server._recover_pending_steer(session, {})
+    assert not server._recover_pending_steer(session, {"pending_steer": "  "})
+    assert session.get("queued_prompt") is None
+
+
 # ── _handle_busy_submit (policy) ───────────────────────────────────────────
 
 def test_busy_interrupt_mode_redirects_active_turn(monkeypatch):

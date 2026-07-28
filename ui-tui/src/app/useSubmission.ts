@@ -27,6 +27,27 @@ export const expandSnips = (snips: PasteSnippet[]) => {
   return (value: string) => value.replace(PASTE_SNIPPET_RE, tok => byLabel.get(tok)?.shift() ?? tok)
 }
 
+export const visibleSteerMessage = (text: string): Msg => ({ role: 'user', text })
+
+interface SteerResponseActions {
+  appendMessage: (message: Msg) => void
+  fallback: (note: string) => void
+  sys: (note: string) => void
+}
+
+export const applySteerResponse = (raw: unknown, text: string, actions: SteerResponseActions) => {
+  const r = asRpcResult<SessionSteerResponse>(raw)
+
+  if (r?.status !== 'queued') {
+    actions.fallback('steer rejected — message queued for next turn')
+
+    return
+  }
+
+  actions.appendMessage(visibleSteerMessage(text))
+  actions.sys('steer accepted')
+}
+
 const spliceMatches = (text: string, matches: RegExpMatchArray[], results: string[]) =>
   matches.reduceRight((acc, m, i) => acc.slice(0, m.index!) + results[i] + acc.slice(m.index! + m[0].length), text)
 
@@ -189,15 +210,10 @@ export function useSubmission(opts: UseSubmissionOptions) {
       }
 
       if (mode === 'steer' && live.sid) {
-        gw.request<SessionSteerResponse>('session.steer', { session_id: live.sid, text: full })
-          .then(raw => {
-            const r = asRpcResult<SessionSteerResponse>(raw)
-
-            if (r?.status !== 'queued') {
-              fallback('steer rejected — message queued for next turn')
-            }
-          })
-          .catch(() => fallback('steer failed — message queued for next turn'))
+        gw.request<SessionSteerResponse>('session.steer', { session_id: live.sid, text: full }).then(
+          raw => applySteerResponse(raw, full, { appendMessage, fallback, sys }),
+          () => fallback('steer failed — message queued for next turn')
+        )
 
         return
       }
@@ -208,7 +224,7 @@ export function useSubmission(opts: UseSubmissionOptions) {
       // and file-drop interpolation exactly once.
       send(full)
     },
-    [composerActions, composerRefs, gw, send, sys]
+    [appendMessage, composerActions, composerRefs, gw, send, sys]
   )
 
   const dispatchSubmission = useCallback(
