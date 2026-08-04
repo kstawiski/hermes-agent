@@ -5815,7 +5815,19 @@ def run_conversation(
                         messages.append(interim_msg)
                         agent._emit_interim_assistant_message(interim_msg)
 
-                if agent._codex_incomplete_retries < 3:
+                # An incomplete turn means the model is still working: it
+                # returned reasoning and no final answer. Three chances is
+                # right for an interactive turn and too few for a long
+                # delegated one, where the alternative is discarding ten
+                # minutes of tool calls and starting the task over. The
+                # default is unchanged; a caller that knows its turn is long
+                # raises it deliberately.
+                try:
+                    _incomplete_budget = max(
+                        1, int(os.environ.get("HERMES_CODEX_INCOMPLETE_MAX_CONTINUATIONS", "3")))
+                except (TypeError, ValueError):
+                    _incomplete_budget = 3
+                if agent._codex_incomplete_retries < _incomplete_budget:
                     # When the interim message has nothing the Responses
                     # input converter will replay (no visible content, no
                     # encrypted reasoning items, no replayable message
@@ -5855,7 +5867,7 @@ def run_conversation(
                                 "content": _CODEX_INCOMPLETE_NUDGE,
                             })
                     if not agent.quiet_mode:
-                        agent._vprint(f"{agent.log_prefix}↻ Codex response incomplete; continuing turn ({agent._codex_incomplete_retries}/3)")
+                        agent._vprint(f"{agent.log_prefix}↻ Codex response incomplete; continuing turn ({agent._codex_incomplete_retries}/{_incomplete_budget})")
                     # Surface the continuation on the live spinner/status line
                     # (CLI/TUI/Desktop) and gateway heartbeat: each of these
                     # retries can spend minutes waiting on the provider, and
@@ -5864,7 +5876,7 @@ def run_conversation(
                     agent._emit_wait_notice(
                         f"↻ model returned reasoning with no final answer — "
                         f"asking it to continue "
-                        f"({agent._codex_incomplete_retries}/3)"
+                        f"({agent._codex_incomplete_retries}/{_incomplete_budget})"
                     )
                     agent._session_messages = messages
                     continue
@@ -5872,12 +5884,12 @@ def run_conversation(
                 agent._codex_incomplete_retries = 0
                 agent._persist_session(messages, conversation_history)
                 return {
-                    "final_response": "Codex response remained incomplete after 3 continuation attempts",
+                    "final_response": f"Codex response remained incomplete after {_incomplete_budget} continuation attempts",
                     "messages": messages,
                     "api_calls": api_call_count,
                     "completed": False,
                     "partial": True,
-                    "error": "Codex response remained incomplete after 3 continuation attempts",
+                    "error": f"Codex response remained incomplete after {_incomplete_budget} continuation attempts",
                 }
             elif hasattr(agent, "_codex_incomplete_retries"):
                 agent._codex_incomplete_retries = 0
