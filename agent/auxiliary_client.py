@@ -6952,13 +6952,15 @@ def _client_cache_key(
     model: Optional[str] = None,
 ) -> tuple:
     runtime = _normalize_main_runtime(main_runtime)
+    runtime_dependent = str(provider or "").strip().lower() in {"auto", "main"}
     runtime_key = tuple(
         _runtime_cache_discriminator(field, runtime.get(field, ""))
         for field in _MAIN_RUNTIME_FIELDS
-    ) if provider == "auto" else ()
-    # `auto` can now resolve through task-specific or main fallback policy,
-    # so the task participates in the cache key. Non-auto providers keep the
-    # old cache shape because the explicit provider/model tuple is sufficient.
+    ) if runtime_dependent else ()
+    # `auto` can resolve through task-specific fallback policy, so the task
+    # participates in its cache key. `main` is isolated by the full runtime
+    # discriminator above: a long-running process may switch the main endpoint
+    # or wire protocol while keeping the same auxiliary task and model.
     task_key = (task or "") if provider == "auto" else ""
     pool_hint = _pool_cache_hint(provider, main_runtime=main_runtime)
     # The model MUST participate in the key. Two concurrent auxiliary calls to

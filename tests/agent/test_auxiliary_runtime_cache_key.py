@@ -60,8 +60,30 @@ def test_implicit_runtime_cache_key_covers_full_connection_and_auth_surface():
     assert len(set(keys)) == len(keys)
 
 
+def test_main_provider_cache_key_tracks_runtime_transport_switch():
+    """A cached chat client must not survive a main-provider switch to Responses."""
+    chat_runtime = _runtime("gpt-5.6-sol")
+    responses_runtime = {
+        **chat_runtime,
+        "provider": "custom:codex-lb",
+        "base_url": "http://codex-lb.test/backend-api/codex",
+        "api_mode": "codex_responses",
+    }
 
+    chat_key = aux._client_cache_key(
+        "main",
+        async_mode=False,
+        model="gpt-5.6-sol",
+        main_runtime=chat_runtime,
+    )
+    responses_key = aux._client_cache_key(
+        "main",
+        async_mode=False,
+        model="gpt-5.6-sol",
+        main_runtime=responses_runtime,
+    )
 
+    assert chat_key != responses_key
 
 
 def test_runtime_context_token_restores_previous_value_after_turn():
