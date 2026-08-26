@@ -272,8 +272,8 @@ def test_install_fan_out_passes_pinned_refs_to_installer(tmp_path):
 
     assert [r.ok for r in results] == [True, True]
     assert installer.call_args_list == [
-        mock.call("o/a", force=False, ref=SHA_A),
-        mock.call("o/b", force=False, ref=SHA_B),
+        mock.call("o/a", force=False, ref=SHA_A, explicit_ref=False),
+        mock.call("o/b", force=False, ref=SHA_B, explicit_ref=False),
     ]
 
 
@@ -324,7 +324,8 @@ def test_install_fan_out_continues_past_failures_and_reports():
         )
     )
 
-    def installer(identifier, *, force, ref):
+    def installer(identifier, *, force, ref, explicit_ref):
+        assert explicit_ref is False
         if "bad" in identifier:
             raise PluginOperationError("clone exploded")
         return (mock.MagicMock(), {"name": "good"}, "good")
@@ -355,7 +356,8 @@ def test_pack_install_exits_nonzero_on_partial_failure(tmp_path, monkeypatch):
     )
     from hermes_cli.plugins_cmd import PluginOperationError
 
-    def installer(identifier, *, force, ref):
+    def installer(identifier, *, force, ref, explicit_ref):
+        assert explicit_ref is False
         if "bad" in identifier:
             raise PluginOperationError("boom")
         return (mock.MagicMock(), {"name": "good"}, "good")

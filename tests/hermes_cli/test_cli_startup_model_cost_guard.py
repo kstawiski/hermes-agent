@@ -307,3 +307,27 @@ def test_top_level_oneshot_rejects_noninteractive_gpt55_pro_startup_override(
     err = capsys.readouterr().err
     assert "EXPENSIVE MODEL WARNING" in err
     assert "non-interactive" in err
+
+
+def test_top_level_oneshot_forwards_explicit_reasoning(main_mod, monkeypatch):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["hermes", "-z", "hello", "--reasoning", "xhigh"],
+    )
+    monkeypatch.setattr(main_mod, "_prepare_agent_startup", lambda _args: None)
+    monkeypatch.setattr(main_mod, "_confirm_startup_expensive_model_override", lambda _args: None)
+    captured = {}
+
+    def fake_run_and_exit_oneshot(*args, **kwargs):
+        captured["args"] = args
+        captured.update(kwargs)
+        raise SystemExit(0)
+
+    monkeypatch.setattr(main_mod, "_run_and_exit_oneshot", fake_run_and_exit_oneshot)
+
+    with pytest.raises(SystemExit) as excinfo:
+        main_mod.main()
+
+    assert excinfo.value.code == 0
+    assert captured["reasoning"] == "xhigh"

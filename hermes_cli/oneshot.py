@@ -180,6 +180,8 @@ def _write_usage_file(path: Optional[str], result: dict, failure: Optional[str] 
             "api_calls": result.get("api_calls"),
             "model": result.get("model"),
             "provider": result.get("provider"),
+            "resolved_provider": result.get("resolved_provider"),
+            "reasoning_effort": result.get("reasoning_effort"),
             "session_id": result.get("session_id"),
             "completed": result.get("completed"),
             "failed": bool(result.get("failed")) or failure is not None,
@@ -203,6 +205,7 @@ def run_oneshot(
     prompt: str,
     model: Optional[str] = None,
     provider: Optional[str] = None,
+    reasoning: Optional[str] = None,
     toolsets: object = None,
     skills: object = None,
     usage_file: Optional[str] = None,
@@ -215,6 +218,7 @@ def run_oneshot(
             env var, then config.yaml's model.default / model.model.
         provider: Optional provider override. Falls back to config.yaml's
             model.provider, then "auto".
+        reasoning: Optional reasoning-effort override.
         toolsets: Optional comma-separated string or iterable of toolsets.
         skills: Optional repeated/comma-separated skill identifiers to preload.
         usage_file: Optional path; when set, a JSON usage report (estimated
@@ -280,6 +284,7 @@ def run_oneshot(
                     prompt,
                     model=model,
                     provider=provider,
+                    reasoning=reasoning,
                     toolsets=explicit_toolsets,
                     use_config_toolsets=use_config_toolsets,
                     skills=skills,
@@ -358,6 +363,7 @@ def _run_agent(
     prompt: str,
     model: Optional[str] = None,
     provider: Optional[str] = None,
+    reasoning: Optional[str] = None,
     toolsets: object = None,
     use_config_toolsets: bool = True,
     skills: object = None,
@@ -373,6 +379,12 @@ def _run_agent(
     from run_agent import AIAgent
 
     cfg = load_config()
+
+    from hermes_constants import parse_reasoning_effort
+
+    reasoning_config = parse_reasoning_effort(reasoning)
+    if reasoning is not None and reasoning_config is None:
+        raise ValueError(f"Unknown reasoning effort: {reasoning!r}")
 
     # Resolve effective model: explicit arg → env var → config.
     model_cfg = cfg.get("model") or {}
@@ -480,6 +492,7 @@ def _run_agent(
             requested_provider=runtime.get("requested_provider"),
             api_mode=runtime.get("api_mode"),
             model=effective_model,
+            reasoning_config=reasoning_config,
             enabled_toolsets=toolsets_list,
             quiet_mode=True,
             platform="cli",

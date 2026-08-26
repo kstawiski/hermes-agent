@@ -484,7 +484,10 @@ def install_pack_plugins(
         console.print(f"[dim]Installing {display} @ {rp.entry.ref[:12]}...[/dim]")
         try:
             target, manifest, installed_name = _install_plugin_core(
-                rp.identifier, force=force, ref=rp.entry.ref
+                rp.identifier,
+                force=force,
+                ref=rp.entry.ref,
+                explicit_ref=False,
             )
         except PluginOperationError as exc:
             results.append(PackInstallResult(display=display, ok=False, error=str(exc)))

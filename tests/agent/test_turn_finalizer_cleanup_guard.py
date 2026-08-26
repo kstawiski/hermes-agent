@@ -164,3 +164,15 @@ def test_clean_turn_has_no_cleanup_errors_key():
     assert "cleanup_errors" not in result
 
 
+def test_finalized_turn_reports_executor_observed_route_identity():
+    agent = _StubAgent(raise_in=())
+    agent.requested_provider = "custom:codex-lb"
+    agent._last_resolved_reasoning_effort = "xhigh"
+
+    result = _run(agent)
+
+    assert result["provider"] == "stub"
+    assert result["resolved_provider"] == "custom:codex-lb"
+    assert result["model"] == "stub/model"
+    assert result["reasoning_effort"] == "xhigh"
+

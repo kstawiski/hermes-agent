@@ -19,6 +19,8 @@ def _result(**overrides):
         "api_calls": 3,
         "model": "openai/gpt-5.5",
         "provider": "openrouter",
+        "resolved_provider": "openrouter",
+        "reasoning_effort": "high",
         "session_id": "abc123",
         "completed": True,
         "failed": False,
@@ -36,6 +38,8 @@ class TestWriteUsageFile:
         assert report["input_tokens"] == 1000
         assert report["output_tokens"] == 200
         assert report["model"] == "openai/gpt-5.5"
+        assert report["resolved_provider"] == "openrouter"
+        assert report["reasoning_effort"] == "high"
         assert report["api_calls"] == 3
         assert report["failed"] is False
         assert "failure" not in report
@@ -54,4 +58,19 @@ class TestWriteUsageFile:
         # Missing result fields serialize as null, not KeyError.
         assert report["estimated_cost_usd"] is None
 
+
+def test_run_oneshot_forwards_explicit_reasoning(monkeypatch):
+    from hermes_cli import oneshot
+
+    captured = {}
+
+    def fake_run_agent(prompt, **kwargs):
+        captured["prompt"] = prompt
+        captured.update(kwargs)
+        return "complete", _result()
+
+    monkeypatch.setattr(oneshot, "_run_agent", fake_run_agent)
+
+    assert oneshot.run_oneshot("task", reasoning="xhigh") == 0
+    assert captured["reasoning"] == "xhigh"
 

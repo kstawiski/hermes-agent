@@ -331,6 +331,30 @@ def test_build_api_kwargs_codex(monkeypatch):
     assert "extra_body" not in kwargs
 
 
+def test_build_api_kwargs_records_final_wire_reasoning_effort(monkeypatch):
+    """Receipts must describe the request that reaches the transport.
+
+    A request override is applied after the model-specific effort clamp, so
+    copying ``agent.reasoning_config`` would report the wrong executor-observed
+    value.  Record the final merged payload instead.
+    """
+    agent = _build_agent(monkeypatch)
+    agent.reasoning_config = {"enabled": True, "effort": "ultra"}
+    agent.request_overrides = {
+        "reasoning": {"effort": "low", "summary": "auto"},
+    }
+
+    kwargs = agent._build_api_kwargs(
+        [
+            {"role": "system", "content": "You are Hermes."},
+            {"role": "user", "content": "Ping"},
+        ]
+    )
+
+    assert kwargs["reasoning"]["effort"] == "low"
+    assert agent._last_resolved_reasoning_effort == "low"
+
+
 def test_build_api_kwargs_mantle_sets_extended_prompt_cache_retention(monkeypatch):
     _patch_agent_bootstrap(monkeypatch)
     agent = run_agent.AIAgent(

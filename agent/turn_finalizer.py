@@ -707,6 +707,12 @@ def finalize_turn(
         "response_previewed": getattr(agent, "_response_was_previewed", False),
         "model": agent.model,
         "provider": agent.provider,
+        "resolved_provider": getattr(
+            agent, "requested_provider", None
+        ) or agent.provider,
+        "reasoning_effort": getattr(
+            agent, "_last_resolved_reasoning_effort", None
+        ),
         "base_url": agent.base_url,
         "input_tokens": agent.session_input_tokens,
         "output_tokens": agent.session_output_tokens,

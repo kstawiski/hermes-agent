@@ -329,9 +329,17 @@ class TestInstallResolution:
         )
         captured = {}
 
-        def fake_core(identifier, *, force, ref=None, scan_decision_cb=None):
+        def fake_core(
+            identifier,
+            *,
+            force,
+            ref=None,
+            explicit_ref=False,
+            scan_decision_cb=None,
+        ):
             captured["identifier"] = identifier
             captured["ref"] = ref
+            captured["explicit_ref"] = explicit_ref
             raise plugins_cmd.PluginOperationError("stop here")
 
         monkeypatch.setattr(plugins_cmd, "_install_plugin_core", fake_core)
@@ -339,6 +347,7 @@ class TestInstallResolution:
             plugins_cmd.cmd_install("hermes-media-studio", enable=False)
         assert captured["identifier"] == "NousResearch/hermes-media-studio"
         assert captured["ref"] == "e" * 40
+        assert captured["explicit_ref"] is False
 
     def test_install_explicit_ref_beats_index_pin(self, hermes_home, monkeypatch):
         from hermes_cli import plugins_cmd
@@ -348,14 +357,23 @@ class TestInstallResolution:
         )
         captured = {}
 
-        def fake_core(identifier, *, force, ref=None, scan_decision_cb=None):
+        def fake_core(
+            identifier,
+            *,
+            force,
+            ref=None,
+            explicit_ref=False,
+            scan_decision_cb=None,
+        ):
             captured["ref"] = ref
+            captured["explicit_ref"] = explicit_ref
             raise plugins_cmd.PluginOperationError("stop here")
 
         monkeypatch.setattr(plugins_cmd, "_install_plugin_core", fake_core)
         with pytest.raises(SystemExit):
             plugins_cmd.cmd_install("hermes-media-studio", enable=False, ref="d" * 40)
         assert captured["ref"] == "d" * 40
+        assert captured["explicit_ref"] is True
 
     def test_install_ambiguous_name_lists_candidates_and_exits(
         self, hermes_home, monkeypatch, capsys
@@ -401,9 +419,17 @@ class TestInstallResolution:
         monkeypatch.setattr(plugin_index, "load_index", boom)
         captured = {}
 
-        def fake_core(identifier, *, force, ref=None, scan_decision_cb=None):
+        def fake_core(
+            identifier,
+            *,
+            force,
+            ref=None,
+            explicit_ref=False,
+            scan_decision_cb=None,
+        ):
             captured["identifier"] = identifier
             captured["ref"] = ref
+            captured["explicit_ref"] = explicit_ref
             raise plugins_cmd.PluginOperationError("stop here")
 
         monkeypatch.setattr(plugins_cmd, "_install_plugin_core", fake_core)
@@ -411,6 +437,7 @@ class TestInstallResolution:
             plugins_cmd.cmd_install("someowner/somerepo", enable=False)
         assert captured["identifier"] == "someowner/somerepo"
         assert captured["ref"] is None
+        assert captured["explicit_ref"] is False
 
 
 # ---------------------------------------------------------------------------

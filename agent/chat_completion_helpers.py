@@ -1935,7 +1935,7 @@ def build_api_kwargs(agent, api_messages: list, tools_for_api: list | None = Non
                     getattr(agent, "log_prefix", ""), exc,
                 )
 
-        return _ct.build_kwargs(
+        codex_kwargs = _ct.build_kwargs(
             model=agent.model,
             messages=_msgs_for_codex,
             tools=tools_for_api,
@@ -1956,6 +1956,14 @@ def build_api_kwargs(agent, api_messages: list, tools_for_api: list | None = Non
             ),
             context_management=_context_management,
         )
+        reasoning_payload = codex_kwargs.get("reasoning")
+        agent._last_resolved_reasoning_effort = (
+            str(reasoning_payload.get("effort")).strip().lower()
+            if isinstance(reasoning_payload, dict)
+            and reasoning_payload.get("effort") is not None
+            else None
+        )
+        return codex_kwargs
 
     # ── chat_completions (default) ─────────────────────────────────────
     _ct = agent._get_transport()

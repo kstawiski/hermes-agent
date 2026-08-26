@@ -98,11 +98,23 @@ def _scan_on_install_enabled() -> bool:
         return True
 
 
-def _scan_plugin_tree(plugin_dir: Path, identifier: str, *, force: bool, scan_decision_cb=None):
+def _scan_plugin_tree(
+    plugin_dir: Path,
+    identifier: str,
+    *,
+    force: bool,
+    canonical_source: Optional[str] = None,
+    requested_revision: Optional[str] = None,
+    installed_revision: Optional[str] = None,
+    explicit_ref: bool = False,
+    scan_decision_cb=None,
+):
     """Scan *plugin_dir* and enforce the install policy.
 
     Verdicts: safe → proceed; caution → needs confirmation (``force=True``
-    or a truthy ``scan_decision_cb(result)``); dangerous → always blocked.
+    or a truthy ``scan_decision_cb(result)``); dangerous → blocked unless the
+    operator configured an exact source-and-commit trust grant and supplied
+    that same commit through ``--ref``.
     Raises :class:`PluginScanBlocked` when the plugin may not be installed.
     Returns the ScanResult (or None when scanning is disabled).
     """
@@ -115,8 +127,24 @@ def _scan_plugin_tree(plugin_dir: Path, identifier: str, *, force: bool, scan_de
         should_allow_plugin_install,
     )
 
-    result = scan_plugin(plugin_dir, source=identifier)
+    result = scan_plugin(plugin_dir, source=canonical_source or identifier)
     allowed, reason = should_allow_plugin_install(result, force=force)
+
+    if (
+        allowed is False
+        and result.verdict == "dangerous"
+        and _exact_commit_is_trusted(
+            canonical_source,
+            requested_revision,
+            installed_revision,
+            explicit_ref=explicit_ref,
+        )
+    ):
+        allowed = True
+        reason = (
+            "Allowed by exact source-and-commit trust grant after "
+            f"{result.verdict} scan"
+        )
 
     if allowed is None and scan_decision_cb is not None:
         try:
@@ -604,7 +632,12 @@ def _safe_git_error(result: subprocess.CompletedProcess, source_url: str = "") -
     return redact_sensitive_text(error)
 
 
-def _git_head_revision(repo: Path, git_exe: str) -> str:
+def _git_head_revision(
+    repo: Path,
+    git_exe: str,
+    *,
+    git_env: Optional[dict[str, str]] = None,
+) -> str:
     result = subprocess.run(
         [git_exe, "rev-parse", "HEAD"],
         cwd=str(repo),
@@ -614,7 +647,7 @@ def _git_head_revision(repo: Path, git_exe: str) -> str:
         errors="replace",
         timeout=15,
         stdin=subprocess.DEVNULL,
-        env=noninteractive_git_env(),
+        env=git_env or noninteractive_git_env(),
     )
     if result.returncode != 0:
         err = _safe_git_error(result)
@@ -622,7 +655,13 @@ def _git_head_revision(repo: Path, git_exe: str) -> str:
     return result.stdout.strip().lower()
 
 
-def _checkout_exact_revision(repo: Path, git_exe: str, revision: str) -> None:
+def _checkout_exact_revision(
+    repo: Path,
+    git_exe: str,
+    revision: str,
+    *,
+    git_env: Optional[dict[str, str]] = None,
+) -> None:
     """Fetch and detach at one immutable commit, then verify the resulting HEAD."""
     try:
         fetched = subprocess.run(
@@ -634,7 +673,7 @@ def _checkout_exact_revision(repo: Path, git_exe: str, revision: str) -> None:
             errors="replace",
             timeout=60,
             stdin=subprocess.DEVNULL,
-            env=noninteractive_git_env(),
+            env=git_env or noninteractive_git_env(),
         )
     except subprocess.TimeoutExpired as exc:
         raise PluginOperationError(
@@ -655,7 +694,7 @@ def _checkout_exact_revision(repo: Path, git_exe: str, revision: str) -> None:
             errors="replace",
             timeout=60,
             stdin=subprocess.DEVNULL,
-            env=noninteractive_git_env(),
+            env=git_env or noninteractive_git_env(),
         )
     except subprocess.TimeoutExpired as exc:
         raise PluginOperationError(
@@ -666,7 +705,11 @@ def _checkout_exact_revision(repo: Path, git_exe: str, revision: str) -> None:
         raise PluginOperationError(
             f"Git checkout of commit '{revision}' failed:\n{err}"
         )
-    actual = _git_head_revision(repo, git_exe)
+    actual = (
+        _git_head_revision(repo, git_exe, git_env=git_env)
+        if git_env is not None
+        else _git_head_revision(repo, git_exe)
+    )
     if actual != revision:
         raise PluginOperationError(
             f"Checked-out revision '{actual}' does not match requested commit '{revision}'."
@@ -691,7 +734,133 @@ def _canonical_source(git_url: str, subdir: Optional[str]) -> str:
     return f"{scrubbed}#{subdir}" if subdir else scrubbed
 
 
-def _scrub_cloned_origin(repo: Path, git_exe: str, git_url: str) -> None:
+def _trusted_source_identity(
+    git_url: str,
+    subdir: Optional[str],
+) -> Optional[str]:
+    """Return an exact source identity only when the clone input is unambiguous.
+
+    HTTP credentials, query strings, and URL fragments can change what Git
+    contacts while disappearing from the scrubbed install record. Such inputs
+    remain installable, but they can never match a dangerous-plugin trust grant.
+    """
+    parsed = urllib.parse.urlsplit(git_url)
+    if parsed.scheme in {"http", "https"}:
+        if (
+            not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or bool(parsed.query)
+            or bool(parsed.fragment)
+        ):
+            return None
+    return _canonical_source(git_url, subdir)
+
+
+def _trusted_git_env() -> dict[str, str]:
+    """Build a noninteractive Git environment with URL rewrites disabled.
+
+    Exact source trust is meaningful only when operator or process-level Git
+    configuration cannot remap that source through ``url.*.insteadOf``. Ignore
+    system and global config and remove inherited command-scope config entries.
+    """
+    env = noninteractive_git_env()
+    for key in tuple(env):
+        if key.startswith("GIT_CONFIG_"):
+            env.pop(key, None)
+    env.pop("GIT_CONFIG_PARAMETERS", None)
+    env.pop("GIT_TEMPLATE_DIR", None)
+    env["GIT_CONFIG_NOSYSTEM"] = "1"
+    env["GIT_CONFIG_GLOBAL"] = os.devnull
+    env["GIT_CONFIG_SYSTEM"] = os.devnull
+    return env
+
+
+def _configured_trusted_commits() -> set[tuple[str, str]]:
+    """Return valid canonical source and immutable commit trust grants.
+
+    Invalid entries are ignored so malformed configuration cannot widen trust.
+    """
+    try:
+        from hermes_cli.config import load_config
+
+        config = load_config()
+        entries = cfg_get(config, "plugins", "trusted_commits", default=[])
+    except Exception:
+        logger.exception("could not read plugin trusted-commit configuration")
+        return set()
+
+    if not isinstance(entries, list):
+        logger.warning("plugins.trusted_commits must be a list; ignoring it")
+        return set()
+
+    grants: set[tuple[str, str]] = set()
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            logger.warning("plugins.trusted_commits[%d] is not a mapping", index)
+            continue
+        raw_source = entry.get("source")
+        raw_commit = entry.get("commit")
+        if not isinstance(raw_source, str) or not raw_source.strip():
+            logger.warning(
+                "plugins.trusted_commits[%d] has no valid source", index
+            )
+            continue
+        if not isinstance(raw_commit, str) or not _EXACT_COMMIT_RE.fullmatch(
+            raw_commit
+        ):
+            logger.warning(
+                "plugins.trusted_commits[%d] commit is not a full SHA", index
+            )
+            continue
+        try:
+            git_url, subdir = _resolve_git_url(raw_source.strip())
+        except ValueError:
+            logger.warning(
+                "plugins.trusted_commits[%d] source is not a Git identifier", index
+            )
+            continue
+        trusted_source = _trusted_source_identity(git_url, subdir)
+        if trusted_source is None:
+            logger.warning(
+                "plugins.trusted_commits[%d] source is ineligible for trust",
+                index,
+            )
+            continue
+        grants.add((trusted_source, raw_commit.lower()))
+    return grants
+
+
+def _exact_commit_is_trusted(
+    canonical_source: Optional[str],
+    requested_revision: Optional[str],
+    installed_revision: Optional[str],
+    *,
+    explicit_ref: bool,
+) -> bool:
+    """Require one explicit, verified source-and-commit match to widen trust."""
+    if not explicit_ref or not canonical_source:
+        return False
+    if not requested_revision or not installed_revision:
+        return False
+    requested = requested_revision.lower()
+    installed = installed_revision.lower()
+    if (
+        not _EXACT_COMMIT_RE.fullmatch(requested)
+        or not _EXACT_COMMIT_RE.fullmatch(installed)
+        or requested != installed
+    ):
+        return False
+    return (canonical_source, installed) in _configured_trusted_commits()
+
+
+def _scrub_cloned_origin(
+    repo: Path,
+    git_exe: str,
+    git_url: str,
+    *,
+    git_env: Optional[dict[str, str]] = None,
+) -> None:
     """Ensure credentials used for cloning do not survive in ``.git/config``."""
     scrubbed = _scrub_git_url(git_url)
     if scrubbed == git_url:
@@ -705,7 +874,7 @@ def _scrub_cloned_origin(repo: Path, git_exe: str, git_url: str) -> None:
         errors="replace",
         timeout=15,
         stdin=subprocess.DEVNULL,
-        env=noninteractive_git_env(),
+        env=git_env or noninteractive_git_env(),
     )
     if result.returncode != 0:
         err = _safe_git_error(result, git_url)
@@ -717,9 +886,15 @@ def _install_plugin_core(
     *,
     force: bool,
     ref: Optional[str] = None,
+    explicit_ref: bool = False,
     scan_decision_cb=None,
 ) -> tuple[Path, dict, str]:
-    """Clone a Git plugin and atomically record its source and exact revision."""
+    """Clone a Git plugin and atomically record its source and exact revision.
+
+    ``explicit_ref`` records whether the operator supplied ``--ref``. A pin
+    resolved from the community index or retained metadata can select checkout
+    bytes, but it cannot widen scanner trust.
+    """
     requested_revision = _normalize_exact_revision(ref) if ref is not None else None
     try:
         git_url, subdir = _resolve_git_url(identifier)
@@ -728,6 +903,14 @@ def _install_plugin_core(
 
     plugins_dir = _plugins_dir()
     source = _canonical_source(git_url, subdir)
+    trusted_source = _trusted_source_identity(git_url, subdir)
+    trust_candidate = bool(
+        explicit_ref
+        and requested_revision
+        and trusted_source
+        and (trusted_source, requested_revision) in _configured_trusted_commits()
+    )
+    git_env = _trusted_git_env() if trust_candidate else noninteractive_git_env()
     old_metadata = _read_install_metadata()
 
     # Reinstalling the same pinned source retains its pin, even if its plugin
@@ -760,7 +943,7 @@ def _install_plugin_core(
                 text=True, encoding='utf-8', errors='replace',
                 timeout=60,
                 stdin=subprocess.DEVNULL,
-                env=noninteractive_git_env(),
+                env=git_env,
             )
         except FileNotFoundError as e:
             raise PluginOperationError("git is not installed or not in PATH.") from e
@@ -770,10 +953,19 @@ def _install_plugin_core(
             err = _safe_git_error(result, git_url)
             raise PluginOperationError(f"Git clone failed:\n{err}")
 
-        _scrub_cloned_origin(tmp_clone, git_exe, git_url)
+        _scrub_cloned_origin(tmp_clone, git_exe, git_url, git_env=git_env)
         if requested_revision:
-            _checkout_exact_revision(tmp_clone, git_exe, requested_revision)
-        installed_revision = _git_head_revision(tmp_clone, git_exe)
+            _checkout_exact_revision(
+                tmp_clone,
+                git_exe,
+                requested_revision,
+                git_env=git_env,
+            )
+        installed_revision = _git_head_revision(
+            tmp_clone,
+            git_exe,
+            git_env=git_env,
+        )
 
         tmp_target = (
             _resolve_subdir_within(tmp_clone, subdir) if subdir else tmp_clone
@@ -832,6 +1024,10 @@ def _install_plugin_core(
             tmp_target,
             identifier,
             force=force,
+            canonical_source=trusted_source,
+            requested_revision=requested_revision,
+            installed_revision=installed_revision,
+            explicit_ref=explicit_ref,
             scan_decision_cb=scan_decision_cb,
         )
 
@@ -967,6 +1163,7 @@ def cmd_install(
     from rich.console import Console
 
     console = Console()
+    explicit_ref = ref is not None
 
     if _looks_like_bare_index_name(identifier):
         identifier, index_ref = _resolve_index_name(identifier, console)
@@ -1012,6 +1209,7 @@ def cmd_install(
             identifier,
             force=force,
             ref=ref,
+            explicit_ref=explicit_ref,
             scan_decision_cb=_interactive_scan_decision,
         )
     except PluginScanBlocked as e:

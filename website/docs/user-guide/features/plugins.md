@@ -642,6 +642,25 @@ Three verdicts, matching Cowork's pass/warn/fail:
 | **caution** | Findings are shown; you confirm `Install anyway? [y/N]` (or pass `--force`) |
 | **dangerous** | Blocked. `--force` does **not** override |
 
+An operator who has reviewed one immutable plugin revision can grant trust to
+that exact repository and commit in `config.yaml`:
+
+```yaml
+plugins:
+  scan_on_install: true
+  trusted_commits:
+    - source: https://github.com/owner/repo.git
+      commit: 0123456789abcdef0123456789abcdef01234567
+```
+
+Hermes still scans the checkout. A dangerous verdict can proceed only when the
+install command includes `--ref` with the same full commit, the detached
+checkout resolves to that commit, and the canonical Git source matches the
+configured source. A commit pin supplied by the community index or retained
+installation metadata does not count as an explicit `--ref`. An omitted
+`--ref`, a different repository, or a different commit remains blocked.
+`--force` cannot replace any of these checks.
+
 On `hermes plugins update`, a dangerous verdict on the updated tree
 disables the plugin until you review the findings and re-enable it.
 
