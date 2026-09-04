@@ -7,7 +7,133 @@ import logging
 import posixpath
 import shutil
 import tempfile
+import errno
+import hashlib
+import os
+import stat
+import threading
+import time
+from contextlib import contextmanager, ExitStack
+from functools import wraps
 from pathlib import Path
+
+
+# Keep lock files OUTSIDE skill trees: rollback/delete replaces those trees. Keys
+# are resolved roots, not profile names, so profiles sharing create_dir serialize.
+# No skill contents or names are stored in the lock directory.
+_transaction_thread_lock = threading.RLock()
+_transaction_local = threading.local()
+_transaction_pid = os.getpid()
+
+
+def _lock_budget():
+    value = float(os.environ.get("HERMES_SKILL_LOCK_TIMEOUT", "30"))
+    if not 0 < value <= 300:
+        raise ValueError("HERMES_SKILL_LOCK_TIMEOUT must be > 0 and <= 300 seconds")
+    return value
+
+
+def _lock_directory():
+    identity = str(os.getuid()) if hasattr(os, "getuid") else hashlib.sha256(
+        str(Path.home().resolve()).encode()).hexdigest()[:16]
+    # Workers may have different TMPDIRs while sharing the same skill roots.
+    # POSIX /tmp is host-wide; using each worker's temp override would silently
+    # split the lock namespace and reintroduce lost updates.
+    temp_root = Path("/tmp") if os.name == "posix" else Path(tempfile.gettempdir())
+    directory = temp_root / f"hermes-skill-transactions-{identity}"
+    directory.mkdir(mode=0o700, exist_ok=True)
+    info = directory.lstat()
+    if (not stat.S_ISDIR(info.st_mode) or info.st_mode & 0o077
+            or (hasattr(os, "getuid") and info.st_uid != os.getuid())):
+        raise OSError(f"Unsafe skill transaction lock directory: {directory}")
+    return directory
+
+
+def _try_file_lock(stream):
+    if os.name == "posix":
+        import fcntl
+        try:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            if exc.errno in (errno.EACCES, errno.EAGAIN):
+                return False
+            raise
+    else:
+        import portalocker
+        try:
+            portalocker.lock(stream, portalocker.LOCK_EX | portalocker.LOCK_NB)
+        except portalocker.LockException:
+            return False
+    return True
+
+
+@contextmanager
+def _skill_transaction_lock():
+    """Bounded, reentrant thread/process lock spanning discovery through rollback.
+
+    Every native writer takes all configured roots in the same resolved order.
+    Existing read-only external roots only need a lock in our private temp state,
+    never a write inside the external tree. Nested batch operations reuse locks.
+    """
+    global _transaction_thread_lock, _transaction_local, _transaction_pid
+    if _transaction_pid != os.getpid():
+        _transaction_thread_lock = threading.RLock()
+        _transaction_local = threading.local()
+        _transaction_pid = os.getpid()
+    if getattr(_transaction_local, "active", False):
+        yield
+        return
+    deadline = time.monotonic() + _lock_budget()
+    if not _transaction_thread_lock.acquire(timeout=max(0, deadline - time.monotonic())):
+        raise TimeoutError("Timed out waiting for the skill transaction lock; retry the write")
+    try:
+        from agent.skill_utils import get_all_skills_dirs, get_skill_create_dir
+        from tools import skill_manager_tool as smt
+        roots = {p.resolve() for p in [smt._skills_dir(), *get_all_skills_dirs()]}
+        if create_dir := get_skill_create_dir():
+            roots.add(create_dir.resolve())  # include even before the first create
+        directory = _lock_directory()
+        with ExitStack() as stack:
+            for root in sorted(roots, key=str):
+                key = hashlib.sha256(os.fsencode(root)).hexdigest()
+                path = directory / f"{key}.lock"
+                flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+                fd = os.open(path, flags, 0o600)
+                stream = stack.enter_context(os.fdopen(fd, "a+b"))
+                info = os.fstat(fd)
+                if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                        or info.st_mode & 0o077
+                        or (hasattr(os, "getuid") and info.st_uid != os.getuid())):
+                    raise OSError(f"Unsafe skill transaction lock file: {path}")
+                while not _try_file_lock(stream):
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError("Timed out waiting for the skill transaction lock; retry the write")
+                    time.sleep(min(0.05, remaining))
+            _transaction_local.active = True
+            try:
+                yield
+            finally:
+                _transaction_local.active = False
+            # Closing descriptors releases locks. Never unlink lock files: waiters
+            # may still have the old inode open, splitting the transaction lock.
+    finally:
+        _transaction_thread_lock.release()
+
+
+def _serialized_skill_writes(fn):
+    @wraps(fn)
+    def wrapped(*args, **kwargs):
+        from tools.registry import tool_error
+        # Separate acquisition errors from mutation errors, which the batch must
+        # catch and roll back rather than disguising them as a lock failure.
+        with ExitStack() as stack:
+            try:
+                stack.enter_context(_skill_transaction_lock())
+            except (OSError, ValueError, ImportError) as exc:
+                return tool_error(f"Skill transaction lock unavailable: {exc}", success=False)
+            return fn(*args, **kwargs)
+    return wrapped
 
 logger = logging.getLogger("tools.skill_manager_tool")
 
@@ -110,6 +236,7 @@ def _rollback(snapshots, find_skill):
     return ("; ".join(notes) if notes else "all touched skills rolled back"), bool(notes)
 
 
+@_serialized_skill_writes
 def _skill_manage_batch(operations, default_name: str = None, task_id: str = None,
                         session_id: str = None) -> str:
     """Apply operations atomically: every touched skill is snapshotted first and any
@@ -135,6 +262,14 @@ def _skill_manage_batch(operations, default_name: str = None, task_id: str = Non
     names, err = _validate_batch_ops(operations, default_name, tool_error)
     if err is not None:
         return err
+    assert names is not None
+    # Scope before approval staging AND snapshots; deny/read-only calls must not
+    # copy sealed skill contents into pending records or rollback storage.
+    for op, nm in zip(operations, names):
+        guard = _smt._worker_skill_scope_guard(
+            op["action"], nm, category=op.get("category"), file_path=op.get("file_path"))
+        if guard:
+            return json.dumps(guard, ensure_ascii=False)
     if not _smt._skill_gate_bypass.get():
         # Approval gate for the WHOLE batch as one pending write.
         def _staging(wa):
@@ -153,14 +288,18 @@ def _skill_manage_batch(operations, default_name: str = None, task_id: str = Non
     results = []
     rollback_failed = False
     token = _smt._skill_gate_bypass.set(True)
+    records = []
+    record_token = _smt._skill_batch_records.set(records)
     try:
         for i, op in enumerate(operations):
-            raw = _smt._skill_manage_from({**op, "name": names[i], "operations": None},
-                                          task_id=task_id, session_id=session_id)
             try:
+                raw = _smt._skill_manage_from({**op, "name": names[i], "operations": None},
+                                              task_id=task_id, session_id=session_id)
                 parsed = json.loads(raw)
-            except Exception:  # noqa: BLE001
-                parsed = {"success": False, "error": "unparseable op result"}
+                if not isinstance(parsed, dict):
+                    raise ValueError("operation result must be an object")
+            except Exception as exc:  # noqa: BLE001 — exceptions must also roll back
+                parsed = {"success": False, "error": f"operation raised {type(exc).__name__}: {exc}"}
             if not parsed.get("success"):
                 note, rollback_failed = _rollback(snapshots, _smt._find_skill)
                 fail = {  # key order is wire-visible
@@ -178,11 +317,14 @@ def _skill_manage_batch(operations, default_name: str = None, task_id: str = Non
                             "file_path": op.get("file_path"), "success": True})
     finally:
         _smt._skill_gate_bypass.reset(token)
+        _smt._skill_batch_records.reset(record_token)
         if rollback_failed:
             # Keep the snapshots so the operator can still recover by hand.
             logger.warning("skill_manage batch rollback failed, snapshots kept at %s", snap_root)
         else:
             shutil.rmtree(snap_root, ignore_errors=True)
+    for record_args, record_kwargs in records:
+        _smt._record_success(*record_args, **record_kwargs)
     # utf-8-sig + errors="replace": SKILL.md files are user-authored and sometimes carry a Notepad BOM or
     # stray non-UTF-8 bytes. Pinning UTF-8 with replacement keeps skill_view deterministic across platforms
     # — falling back to the machine locale (cp1252/GBK) would make the same skill render differently per

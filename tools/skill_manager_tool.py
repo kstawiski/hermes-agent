@@ -11,6 +11,7 @@ import contextvars as _ctxvars
 import json
 from contextlib import suppress
 import logging
+import os
 import re
 import shutil
 import threading
@@ -31,7 +32,7 @@ from tools.skill_manager_guards import (
     _background_review_preflight, _background_review_read_before_write_guard, _background_review_write_guard,
     _containing_skills_root, _curator_consolidation_delete_guard, _maybe_auto_propose_org_edit,
     _org_mirror_write_guard, _pinned_guard, _validate_delete_target, _is_background_review, _refusal as _err)
-from tools.skill_manager_batch import _skill_manage_batch
+from tools.skill_manager_batch import _skill_manage_batch, _serialized_skill_writes
 from tools.skills_guard import scan_skill, should_allow_install, format_scan_report
 
 logger = logging.getLogger(__name__)
@@ -577,6 +578,52 @@ def _remove_file(name: str, file_path: str) -> Dict[str, Any]:
 _skill_gate_bypass: "_ctxvars.ContextVar[bool]" = _ctxvars.ContextVar(
     "skill_gate_bypass", default=False)
 
+# A batch publishes mutation telemetry/cache/sync side effects only after commit.
+_skill_batch_records: "_ctxvars.ContextVar[Optional[list]]" = _ctxvars.ContextVar(
+    "skill_batch_records", default=None)
+
+
+def _worker_skill_scope_guard(action, name, *, category=None, file_path=None):
+    """Optional worker boundary, independent of write approval (including replay).
+
+    HERMES_SKILL_WRITE_SCOPE=local permits only active-profile, locally owned
+    skills. deny disables persistence for no-learn/read-only tasks, not reads.
+    Unset retains upstream explicit user-directed editing semantics.
+    """
+    scope = os.environ.get("HERMES_SKILL_WRITE_SCOPE", "").strip().lower()
+    if not scope:
+        return None
+    if scope != "local":
+        return _err("Skill writes disabled by HERMES_SKILL_WRITE_SCOPE "
+                    f"({scope!r}); existing skills remain readable.")
+    try:
+        from tools import skill_usage
+        existing = _find_skill(name)
+        target = existing["path"] if existing else _resolve_skill_dir(name, category or "")
+        local = _skills_dir().resolve()
+        resolved = target.resolve()
+        if not resolved.is_relative_to(local) or resolved == local:
+            return _err("Local learning cannot modify externally owned/plugin skills or "
+                        "a redirected skills.create_dir. Use the maintainer workflow.")
+        from agent.skill_utils import is_org_mirror_path
+        if is_org_mirror_path(target, _skills_dir()):
+            return _err("Local learning cannot modify organisation-owned skill mirrors.")
+        if any(predicate(target.name) for predicate in (
+                skill_usage.is_protected_builtin, skill_usage.is_bundled,
+                skill_usage.is_hub_installed)):
+            return _err("Local learning cannot modify protected, bundled, or hub-installed "
+                        f"skill '{name}'. Use the maintainer workflow.")
+        # A local package can itself contain a redirect to canonical/plugin data.
+        # Reject the complete redirected package: batch snapshots/rollback also
+        # traverse supporting files, not just the requested target.
+        if target.exists() and any(p.is_symlink() for p in [target, *target.rglob("*")]):
+            return _err("Local learning cannot modify a skill containing symlinks.")
+        if file_path and not (target / file_path).resolve().is_relative_to(resolved):
+            return _err("Local learning file path escapes its skill directory.")
+    except Exception as exc:
+        return _err(f"Local skill ownership could not be verified: {exc}")
+    return None
+
 
 def _run_write_gate(build_staging):
     """Shared write gate: None to proceed, else a JSON tool result (blocked/staged).
@@ -732,6 +779,7 @@ def _record_success(action, name, result, *, file_path, absorbed_into, task_id,
         _maybe_debounced_sync_push(name)
 
 
+@_serialized_skill_writes
 def skill_manage(
     action: str, name: str, content: str = None, category: str = None, file_path: str = None,
     file_content: str = None, old_string: str = None, new_string: str = None,
@@ -742,10 +790,12 @@ def skill_manage(
     if operations is not None:
         return _skill_manage_batch(
             operations, default_name=name or None, task_id=task_id, session_id=session_id)
+    if guard := _worker_skill_scope_guard(action, name, category=category, file_path=file_path):
+        return json.dumps(guard, ensure_ascii=False)
     if (preflight := _background_review_preflight(action, name)) is not None:
         return json.dumps(preflight, ensure_ascii=False)
-    # Approval gate: skills are too large to review inline, so they always stage regardless
-    # of origin; bypassed when replaying an approved staged write.
+    # Approval off/unset allows native writes. Explicit skills.write_approval=true
+    # stages rather than prompting inline; only approved replay bypasses this gate.
     args = dict(content=content, category=category, file_path=file_path, file_content=file_content,
                 old_string=old_string, new_string=new_string, replace_all=replace_all,
                 absorbed_into=absorbed_into)
@@ -771,9 +821,13 @@ def skill_manage(
     if isinstance(result, str):
         return result  # tool_error JSON for argument-shape problems (patch)
     if result.get("success"):
-        _record_success(
-            action, name, result, file_path=file_path, absorbed_into=absorbed_into,
-            task_id=task_id, session_id=session_id, ledger_before=_ledger_before)
+        record_args = (action, name, result)
+        record_kwargs = dict(file_path=file_path, absorbed_into=absorbed_into,
+                             task_id=task_id, session_id=session_id, ledger_before=_ledger_before)
+        if (records := _skill_batch_records.get()) is not None:
+            records.append((record_args, record_kwargs))
+        else:
+            _record_success(*record_args, **record_kwargs)
     return json.dumps(result, ensure_ascii=False)
 
 
