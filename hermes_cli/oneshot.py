@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import sys
+import tempfile
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
 from pathlib import Path
@@ -29,6 +30,7 @@ _USAGE_KEYS = (
     "estimated_cost_usd", "cost_status", "cost_source", "input_tokens", "output_tokens",
     "cache_read_tokens", "cache_write_tokens", "reasoning_tokens", "total_tokens", "api_calls",
     "model", "provider", "session_id", "completed",
+    "resolved_provider", "reasoning_effort", "execution_evidence",
 )
 
 
@@ -155,7 +157,16 @@ def _write_usage_file(path: Optional[str], result: dict, failure: Optional[str] 
             report["failure"] = failure
         out = Path(path).expanduser()
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        fd, temporary = tempfile.mkstemp(prefix=".usage-", dir=out.parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                stream.write(json.dumps(report, indent=2) + "\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, out)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
     except Exception:
         pass
 
@@ -167,12 +178,15 @@ def run_oneshot(
     toolsets: object = None,
     skills: object = None,
     usage_file: Optional[str] = None,
+    reasoning: Optional[str] = None,
+    trajectory_file: Optional[str] = None,
 ) -> int:
     """Execute a single prompt and print only the final content block.
 
     Model/provider fall back to ``HERMES_INFERENCE_MODEL`` and config.yaml. ``usage_file`` gets a
-    JSON usage report even when the run fails. Returns the exit code; the caller owns process
-    termination.
+    JSON usage report even when the run fails. ``trajectory_file`` (or the Fleet
+    ``HERMES_TRANSCRIPT_FILE`` environment binding) records private full request/response events.
+    Returns the exit code; the caller owns process termination.
     """
     # Silence every stdlib logger: AIAgent, tools and provider adapters log to stderr through the
     # root logger. File handlers from setup_logging() keep working (level-independent).
@@ -220,6 +234,8 @@ def run_oneshot(
                 toolsets=explicit_toolsets,
                 use_config_toolsets=use_config_toolsets,
                 skills=skills,
+                reasoning=reasoning,
+                trajectory_file=trajectory_file,
             )
         except BaseException as exc:  # noqa: BLE001
             # Capture anything escaping the agent (OSError from prompt_toolkit on a non-TTY pipe,
@@ -347,6 +363,8 @@ def _run_agent(
     toolsets: object = None,
     use_config_toolsets: bool = True,
     skills: object = None,
+    reasoning: Optional[str] = None,
+    trajectory_file: Optional[str] = None,
 ) -> tuple[str, dict]:
     """Build an AIAgent exactly like a normal CLI chat turn, run one conversation, and return
     ``(final_response, run_result)``. Imports are local to keep CLI startup cheap."""
@@ -381,6 +399,14 @@ def _run_agent(
 
     skills_prompt = _build_preloaded_skills_prompt(skills)
 
+    from hermes_constants import parse_reasoning_effort, resolve_reasoning_config
+    from hermes_cli.oneshot_evidence import OneshotEvidence
+
+    reasoning_config = parse_reasoning_effort(reasoning) if reasoning is not None else resolve_reasoning_config(cfg, choice.model)
+    if reasoning is not None and reasoning_config is None:
+        raise ValueError(f"Invalid reasoning effort: {reasoning}")
+    evidence = OneshotEvidence(cfg, trajectory_file or os.getenv("HERMES_TRANSCRIPT_FILE"))
+    evidence.event("prompt", {"content": prompt})
     session_db = _create_session_db_for_oneshot()
     # The try spans agent construction (not just ``chat``) so the store is always closed, even when
     # ``AIAgent(...)`` raises — the one-shot exit path hard-exits via os._exit and skips finalizers.
@@ -393,6 +419,7 @@ def _run_agent(
             requested_provider=runtime.get("requested_provider"),
             api_mode=runtime.get("api_mode"),
             model=choice.model,
+            reasoning_config=reasoning_config,
             enabled_toolsets=toolsets_list,
             quiet_mode=True,
             platform="cli",
@@ -410,10 +437,22 @@ def _run_agent(
         agent.stream_delta_callback = None
         agent.tool_gen_callback = None
 
+        agent._oneshot_evidence = evidence
         result = agent.run_conversation(prompt)
+        result.update(evidence.summary())
+        evidence.event("result", result)
         return (result.get("final_response") or "", result)
+    except BaseException as exc:
+        evidence.event("failure", {"type": type(exc).__name__, "message": str(exc)})
+        raise
     finally:
-        _close_agent(agent, session_db)
+        try:
+            messages = getattr(agent, "_session_messages", None)
+            if isinstance(messages, list):
+                evidence.event("session_messages", messages)
+        finally:
+            evidence.close()
+            _close_agent(agent, session_db)
 
 
 def _quietly(what: str, fn) -> None:
